@@ -27,3 +27,17 @@ export function loadSpecialist<T extends SpecialistId>(
   }
   return instance as Promise<SpecialistPipeline<T>>
 }
+
+/**
+ * Frees a loaded specialist's weights (ONNX session + tensors) from
+ * memory and drops it from the cache — the next `loadSpecialist` call for
+ * that id re-initializes it (fast: the download itself stays in the
+ * browser's HTTP cache, only the in-memory session is gone).
+ */
+export async function disposeSpecialist(id: SpecialistId): Promise<void> {
+  const instance = instances.get(id)
+  if (!instance) return
+  instances.delete(id)
+  const resolved = (await instance) as { dispose(): Promise<void> }
+  await resolved.dispose()
+}

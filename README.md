@@ -56,6 +56,21 @@ and cached by the browser after first use.
   means terminating and respawning it — cached weights make the respawn
   quick, just not instant).
 
+**Memory:** a loaded specialist's weights sit decompressed in the worker's
+memory (RAM for the WASM backend, VRAM for WebGPU) for as long as it stays
+cached — this is unavoidable, the browser's disk/HTTP cache only speeds up
+future *downloads*, it doesn't reduce what a *running* model occupies.
+`src/ai/pipelines.ts` caches each specialist as a singleton so a repeat call
+doesn't re-download or re-initialize it, but that means every specialist
+used in a session would otherwise stay resident forever. `chat` and
+`translate` run on every turn, so they're always kept warm; `caption` /
+`summarize` / `qa` are only needed situationally (an attached image or
+document), so `runAgentTurn` disposes whichever of those it loaded — via
+each pipeline's own `.dispose()` — right after using them, before the two
+always-on models run. This trades a bit of latency (redownload-free, but
+re-initializing a session takes a moment) for a materially smaller memory
+footprint, which matters most on the mobile devices this UI targets.
+
 **Why English → French translation, not French generation directly:** small
 generalist chat models like `chat` here are noticeably weaker writing French
 than English — that's the language their training data skews toward at this
