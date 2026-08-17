@@ -61,6 +61,7 @@ async function handleRun(message: WorkerRunRequest) {
       (event) => post({ requestId: message.requestId, ...event }),
     )
   } catch (error) {
+    console.error('[Localia agent worker]', error)
     post({
       requestId: message.requestId,
       type: 'error',

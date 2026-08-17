@@ -66,6 +66,7 @@ export function useAgent() {
           activeIndex = -1
           break
         case 'error':
+          console.error('[Localia agent]', message.message)
           if (!messages.value[activeIndex].content) {
             messages.value[activeIndex].content = "Désolé, une erreur est survenue pendant le traitement."
           }
