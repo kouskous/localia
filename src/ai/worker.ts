@@ -1,3 +1,4 @@
+import type { Message } from '@huggingface/transformers'
 import './env'
 import { runAgentTurn } from './orchestrator'
 import { loadSpecialist } from './pipelines'
@@ -10,6 +11,7 @@ export interface WorkerRunRequest {
   text: string
   images: AgentImageInput[]
   documents: AgentDocumentInput[]
+  history: Message[]
 }
 
 export type WorkerRequest = { type: 'preload' } | WorkerRunRequest
@@ -76,7 +78,7 @@ async function preload() {
 async function handleRun(message: WorkerRunRequest) {
   try {
     await runAgentTurn(
-      { text: message.text, images: message.images, documents: message.documents },
+      { text: message.text, images: message.images, documents: message.documents, history: message.history },
       (event) => post({ requestId: message.requestId, ...event }),
     )
   } catch (error) {

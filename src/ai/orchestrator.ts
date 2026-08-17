@@ -112,9 +112,12 @@ export async function runAgentTurn(input: AgentTurnInput, emit: (event: AgentEve
   // the most reliable language for a small generalist LLM. The dedicated
   // `translate` specialist below is what actually produces the French the
   // user sees — much better than asking `chat` to write French directly.
+  // Prior turns in `history` are in French (what the user actually saw),
+  // which Qwen3 reads fine even though it's asked to keep writing English.
   const systemPrompt =
-    'You are Localia, a minimal AI assistant. Answer in English, clearly and concisely, ' +
-    'based only on the information provided below if it exists. Do not invent anything.'
+    'You are Localia, a minimal AI assistant having an ongoing conversation. Prior turns may be ' +
+    'in French. Answer in English, clearly and concisely, based on the conversation so far and ' +
+    'the information provided below if it exists. Do not invent anything.'
 
   const contextBlock = observations.length
     ? `Gathered information:\n${observations.map((o) => `- ${o}`).join('\n')}\n\n`
@@ -122,6 +125,7 @@ export async function runAgentTurn(input: AgentTurnInput, emit: (event: AgentEve
 
   const messages: Message[] = [
     { role: 'system', content: systemPrompt },
+    ...input.history,
     { role: 'user', content: `${contextBlock}${input.text || 'Describe what you observe.'}` },
   ]
 

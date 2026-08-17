@@ -45,8 +45,13 @@ and cached by the browser after first use.
 - `src/ai/orchestrator.ts` — the agentic loop: inspect what was attached,
   route each piece to the specialist suited to it (image → caption,
   document + question → QA, document alone → summarize), hand the gathered
-  observations to `chat` to draft a grounded answer, then hand that draft to
-  `translate` for the final, streamed French reply.
+  observations plus recent conversation history to `chat` to draft a
+  grounded answer, then hand that draft to `translate` for the final,
+  streamed French reply. `useAgent.ts` builds that history from the last
+  `MAX_HISTORY_MESSAGES` (10) non-empty messages each turn — it's just past
+  message text, not re-run attachment processing, so a follow-up that
+  references an earlier image relies on that image having been described in
+  the assistant's own prior reply.
 - `src/ai/pdf.ts` — text-layer extraction for PDFs via `pdfjs-dist` (no OCR:
   scanned/image-only PDFs come back empty and the assistant says so).
 - `src/ai/worker.ts` + `src/composables/useAgent.ts` — all model loading and

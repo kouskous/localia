@@ -1,3 +1,4 @@
+import type { Message } from '@huggingface/transformers'
 import { ref } from 'vue'
 import type { AgentDocumentInput, AgentImageInput } from '../ai/types'
 import type { WorkerRequest, WorkerResponse } from '../ai/worker'
@@ -11,6 +12,18 @@ function nextId() {
 
 function isPlainText(attachment: ChatAttachment): boolean {
   return attachment.type.startsWith('text/') || /\.txt$/i.test(attachment.name)
+}
+
+// Capped so the prompt (and CPU/WASM inference cost) doesn't grow
+// unbounded over a long conversation — plenty for these small models to
+// stay on-topic without dragging the whole history through every turn.
+const MAX_HISTORY_MESSAGES = 10
+
+function buildHistory(messages: ChatMessage[]): Message[] {
+  return messages
+    .filter((m) => m.content.trim().length > 0)
+    .slice(-MAX_HISTORY_MESSAGES)
+    .map((m) => ({ role: m.role, content: m.content }))
 }
 
 function createWorker() {
@@ -105,6 +118,8 @@ export function useAgent() {
     const trimmed = text.trim()
     if (!trimmed && attachments.length === 0) return
 
+    const history = buildHistory(messages.value)
+
     messages.value.push({
       id: nextId(),
       role: 'user',
@@ -136,6 +151,7 @@ export function useAgent() {
       text: trimmed + note,
       images,
       documents,
+      history,
     }
     const transfer = documents
       .map((d) => d.data)
