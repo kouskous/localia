@@ -46,11 +46,14 @@ export const SPECIALISTS = {
   },
   // `chat` reasons and drafts in English — by far its strongest language at
   // this size — and this specialist turns that into fluent French, which a
-  // small generalist chat model can't reliably do on its own.
+  // small generalist chat model can't reliably do on its own. A MarianMT
+  // model trained specifically for EN→FR (~74M params) rather than a
+  // multilingual model covering 200 languages (~600M) — much lighter to
+  // download, and often *better* on this one pair for being a specialist.
   translate: {
     id: 'translate',
     task: 'translation',
-    model: 'Xenova/nllb-200-distilled-600M',
+    model: 'Xenova/opus-mt-en-fr',
     actionLabel: 'Traduction en français…',
   },
 } satisfies Record<SpecialistId, SpecialistConfig>

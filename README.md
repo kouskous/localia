@@ -39,8 +39,8 @@ and cached by the browser after first use.
   - `summarize` — `Xenova/distilbart-cnn-6-6`, summarizes long documents
   - `qa` — `Xenova/distilbert-base-uncased-distilled-squad`, extractive
     question-answering over document text
-  - `translate` — `Xenova/nllb-200-distilled-600M`, turns that English draft
-    into the French the user actually sees
+  - `translate` — `Xenova/opus-mt-en-fr` (MarianMT, ~74M params, EN→FR
+    only), turns that English draft into the French the user actually sees
 - `src/ai/orchestrator.ts` — the agentic loop: inspect what was attached,
   route each piece to the specialist suited to it (image → caption,
   document + question → QA, document alone → summarize), hand the gathered
@@ -77,9 +77,11 @@ than English — that's the language their training data skews toward at this
 size. Rather than accept weak French, `chat` drafts in English (its best
 language) and a dedicated translation model converts that into French —
 translation is a narrower, better-solved problem for a small model than open
-generation in a second language. The cost is latency: a turn now runs two
-sequential generations instead of one, and downloads a second ~600M-parameter
-model on first use.
+generation in a second language, and a model trained specifically for the
+EN→FR pair (rather than one multilingual model covering ~200 languages) can
+be both much smaller and better at this one pair. The cost is latency: a
+turn now runs two sequential generations instead of one, and downloads a
+second (much smaller, ~74M-parameter) model on first use.
 
 **Known limitations, honestly:** these are genuinely small models, chosen to
 keep downloads light rather than for peak accuracy. `caption`/`summarize`/`qa`

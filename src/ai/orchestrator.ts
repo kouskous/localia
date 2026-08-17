@@ -151,9 +151,10 @@ export async function runAgentTurn(input: AgentTurnInput, emit: (event: AgentEve
     },
   })
 
+  // opus-mt-en-fr is a fixed EN→FR pair (unlike NLLB/M2M100), so there's no
+  // src_lang/tgt_lang to pass — the checkpoint only ever translates that
+  // one direction.
   await translator(englishAnswer || "I don't have an answer.", {
-    src_lang: 'eng_Latn',
-    tgt_lang: 'fra_Latn',
     max_new_tokens: 300,
     streamer,
   })
