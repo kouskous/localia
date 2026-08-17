@@ -7,6 +7,8 @@ export interface ChatAttachment {
   type: string
   kind: 'image' | 'pdf' | 'document' | 'file'
   previewUrl?: string
+  /** The original file, kept for the agent to actually read — not for display. */
+  file: File
 }
 
 export interface ChatMessage {

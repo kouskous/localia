@@ -18,13 +18,53 @@ Key building blocks:
 - `src/components/chat/` — the empty state, suggestion chips, composer
   (auto-growing textarea, attachments, drag & drop), message list and
   bubbles, streaming/processing indicator, drop overlay.
-- `src/components/LoadingScreen.vue` — the first-run intro screen.
-- `src/composables/useChat.ts` — chat state and a simulated streaming
-  response, standing in for a real model/backend integration.
+- `src/components/LoadingScreen.vue` — the first-run intro screen, driven
+  by real model-download progress (see below), not a fake timer.
 
 Motion respects `prefers-reduced-motion`, and the layout is designed for
 desktop, tablet and mobile (keyboard-safe composer, full-height
 conversation, touch-friendly targets).
+
+## AI: small local models, orchestrated by domain
+
+There is no backend and no API key. Everything runs **in the visitor's own
+browser** via [Transformers.js](https://huggingface.co/docs/transformers.js),
+using small, task-specialized ONNX models pulled from the Hugging Face Hub
+and cached by the browser after first use.
+
+- `src/ai/specialists.ts` — the model registry, one small model per domain:
+  - `chat` — `onnx-community/Qwen3-0.6B-ONNX` (q4f16), the generalist that
+    drafts the final, French reply
+  - `caption` — `Xenova/vit-gpt2-image-captioning`, describes attached images
+  - `summarize` — `Xenova/distilbart-cnn-6-6`, summarizes long documents
+  - `qa` — `Xenova/distilbert-base-uncased-distilled-squad`, extractive
+    question-answering over document text
+- `src/ai/orchestrator.ts` — the agentic loop: inspect what was attached,
+  route each piece to the specialist suited to it (image → caption,
+  document + question → QA, document alone → summarize), then hand the
+  gathered observations to the `chat` model to compose one grounded,
+  streamed reply.
+- `src/ai/pdf.ts` — text-layer extraction for PDFs via `pdfjs-dist` (no OCR:
+  scanned/image-only PDFs come back empty and the assistant says so).
+- `src/ai/worker.ts` + `src/composables/useAgent.ts` — all model loading and
+  inference runs in a Web Worker, off the main thread, so the UI (and its
+  animations) never freezes during a heavy generation. `useAgent` owns the
+  worker, mirrors its events into reactive chat state, and recreates the
+  worker on cancel (generation isn't cooperatively abortable, so a hard stop
+  means terminating and respawning it — cached weights make the respawn
+  quick, just not instant).
+
+**Known limitations, honestly:** these are genuinely small models, chosen to
+keep downloads light rather than for peak accuracy. `caption`/`summarize`/`qa`
+are English-trained, so their raw output is English even though the final
+`chat` pass is instructed to answer in French — quality on French documents
+will vary. There's no OCR, so scanned PDFs and `.docx`/`.rtf` files aren't
+read (the assistant is told to say so rather than guess). None of this was
+runtime-tested against the real Hugging Face CDN from the environment this
+was built in (its network egress is sandboxed); the code is correct against
+the library's own documented APIs, but give it a real test pass once
+deployed, since actual model downloads and in-browser inference couldn't be
+exercised end-to-end here.
 
 ## Development
 

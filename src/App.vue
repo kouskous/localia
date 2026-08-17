@@ -6,30 +6,16 @@ import EmptyState from './components/chat/EmptyState.vue'
 import Composer from './components/chat/Composer.vue'
 import MessageList from './components/chat/MessageList.vue'
 import DropOverlay from './components/chat/DropOverlay.vue'
-import { useChat } from './composables/useChat'
+import { useAgent } from './composables/useAgent'
 import { filesToAttachments } from './composables/useFileKind'
 
-const booting = ref(true)
-const bootProgress = ref(0)
-
-const { messages, isProcessing, processingLabel, sendMessage, cancel, reset } = useChat()
+const { booting, bootProgress, messages, isProcessing, processingLabel, sendMessage, cancel, reset } = useAgent()
 
 const composerRef = ref<InstanceType<typeof Composer> | null>(null)
 const isDragging = ref(false)
 let dragDepth = 0
-let bootTimer: ReturnType<typeof setInterval> | undefined
 
 onMounted(() => {
-  bootTimer = setInterval(() => {
-    bootProgress.value = Math.min(100, bootProgress.value + 4 + Math.random() * 8)
-    if (bootProgress.value >= 100) {
-      clearInterval(bootTimer)
-      setTimeout(() => {
-        booting.value = false
-      }, 350)
-    }
-  }, 120)
-
   window.addEventListener('dragenter', onDragEnter)
   window.addEventListener('dragleave', onDragLeave)
   window.addEventListener('dragover', onDragOver)
@@ -37,7 +23,6 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
-  clearInterval(bootTimer)
   window.removeEventListener('dragenter', onDragEnter)
   window.removeEventListener('dragleave', onDragLeave)
   window.removeEventListener('dragover', onDragOver)

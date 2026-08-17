@@ -35,6 +35,7 @@ function toAttachment(file: File): ChatAttachment {
     type: file.type,
     kind,
     previewUrl: kind === 'image' ? URL.createObjectURL(file) : undefined,
+    file,
   }
 }
 
