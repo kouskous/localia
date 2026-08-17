@@ -40,8 +40,8 @@ and cached by the browser after first use.
   - `summarize` — `Xenova/distilbart-cnn-6-6`, summarizes long documents
   - `qa` — `Xenova/distilbert-base-uncased-distilled-squad`, extractive
     question-answering over document text
-  - `translate` — `Xenova/nllb-200-distilled-600M`, turns that English
-    draft into the French the user actually sees
+  - `translate` — `Xenova/m2m100_418M`, turns that English draft into the
+    French the user actually sees
 - `src/ai/orchestrator.ts` — the agentic loop: inspect what was attached,
   route each piece to the specialist suited to it (image → caption,
   document + question → QA, document alone → summarize), hand the gathered
@@ -86,14 +86,17 @@ than English — that's the language their training data skews toward at this
 size. Rather than accept weak French, `chat` drafts in English (its best
 language) and a dedicated translation model converts that into French —
 translation is a narrower, better-solved problem for a small model than open
-generation in a second language. `translate` (NLLB-200-distilled-600M) was
-picked over a much smaller bilingual model (opus-mt-en-fr, ~74M params)
-deliberately: it's noticeably more fluent and grammatically consistent on
-this pair, and translation quality mattered more here than trimming the
-download further. The cost is latency (a turn now runs two sequential
-generations instead of one) and a second, non-trivial (~600M-parameter)
-model download on first use — mitigated by downloading it in parallel with
-`chat` at boot rather than mid-conversation (see below).
+generation in a second language. Landing on `translate` took three tries,
+trading off quality against download size: `opus-mt-en-fr` (~74M params,
+bilingual) was too basic — noticeable grammar mistakes; `nllb-200-distilled-
+600M` (multilingual, 200 languages) fixed that but was too heavy a download;
+`m2m100_418M` — NLLB's direct predecessor, same research lineage — is the
+middle ground: ~30% lighter than NLLB while still a modern multilingual
+model, well ahead of the bilingual option on fluency for a high-resource
+pair like EN→FR. The cost is latency (a turn now runs two sequential
+generations instead of one) and a second model download on first use —
+mitigated by downloading it in parallel with `chat` at boot rather than
+mid-conversation (see below).
 
 **Known limitations, honestly:** these are genuinely small models, chosen to
 keep downloads light rather than for peak accuracy. `caption`/`summarize`/`qa`

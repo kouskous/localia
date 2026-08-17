@@ -155,9 +155,11 @@ export async function runAgentTurn(input: AgentTurnInput, emit: (event: AgentEve
     },
   })
 
+  // M2M100 uses plain ISO codes ('en'/'fr'), unlike NLLB's FLORES-200
+  // codes ('eng_Latn'/'fra_Latn').
   await translator(englishAnswer || "I don't have an answer.", {
-    src_lang: 'eng_Latn',
-    tgt_lang: 'fra_Latn',
+    src_lang: 'en',
+    tgt_lang: 'fr',
     max_new_tokens: 300,
     streamer,
   })

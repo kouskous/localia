@@ -46,16 +46,15 @@ export const SPECIALISTS = {
   },
   // `chat` reasons and drafts in English — by far its strongest language at
   // this size — and this specialist turns that into fluent French, which a
-  // small generalist chat model can't reliably do on its own. NLLB is a
-  // modern, well-regarded multilingual model — noticeably more fluent and
-  // grammatically consistent on high-resource pairs like EN→FR than the
-  // older bilingual opus-mt-en-fr, at the cost of a heavier (~600M param)
-  // download. Chosen deliberately over the lighter option: translation
-  // quality (no grammar mistakes) matters more here than download size.
+  // small generalist chat model can't reliably do on its own. M2M100 is
+  // NLLB's direct predecessor (same Meta research lineage) — a genuine
+  // middle ground: ~418M params (30% lighter than NLLB-200's 600M) while
+  // still a modern multilingual model, well ahead of the small bilingual
+  // opus-mt-en-fr on fluency for a high-resource pair like EN→FR.
   translate: {
     id: 'translate',
     task: 'translation',
-    model: 'Xenova/nllb-200-distilled-600M',
+    model: 'Xenova/m2m100_418M',
     actionLabel: 'Traduction en français…',
   },
 } satisfies Record<SpecialistId, SpecialistConfig>
