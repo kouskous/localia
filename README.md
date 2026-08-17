@@ -65,20 +65,25 @@ and cached by the browser after first use.
   reason to make the first reply wait on a second download mid-conversation)
   and reports one combined, byte-weighted progress for the loading screen.
 
-**Memory:** a loaded specialist's weights sit decompressed in the worker's
-memory (RAM for the WASM backend, VRAM for WebGPU) for as long as it stays
-cached — this is unavoidable, the browser's disk/HTTP cache only speeds up
-future *downloads*, it doesn't reduce what a *running* model occupies.
-`src/ai/pipelines.ts` caches each specialist as a singleton so a repeat call
-doesn't re-download or re-initialize it, but that means every specialist
-used in a session would otherwise stay resident forever. `chat` and
-`translate` run on every turn, so they're always kept warm; `caption` /
-`summarize` / `qa` are only needed situationally (an attached image or
-document), so `runAgentTurn` disposes whichever of those it loaded — via
-each pipeline's own `.dispose()` — right after using them, before the two
-always-on models run. This trades a bit of latency (redownload-free, but
-re-initializing a session takes a moment) for a materially smaller memory
-footprint, which matters most on the mobile devices this UI targets.
+**Caching:** every specialist loads once per session and stays cached from
+then on — `src/ai/pipelines.ts` caches each as a singleton keyed by id, so a
+repeat call just returns the already-initialized pipeline instantly, no
+re-download and no re-initialization. On top of that, `env.useBrowserCache =
+true` (`src/ai/env.ts`) persists the raw downloaded weights in the browser's
+Cache Storage, so even a fresh page load (a new worker, which can't share
+the previous one's in-memory session) skips the network and only pays the
+cost of re-parsing already-downloaded bytes into a session.
+
+An earlier version disposed `caption`/`summarize`/`qa` (via each pipeline's
+own `.dispose()`) right after use to cap memory, since a loaded specialist's
+weights sit decompressed in the worker's memory (RAM for WASM, VRAM for
+WebGPU) for as long as they're cached — that's unavoidable, disk caching
+only speeds up *downloads*, not what a *running* model occupies. That
+traded a smaller memory footprint for re-initializing those three specialists
+on every subsequent use, which felt like repeated loading — removed in favor
+of "load once, stay cached" for the whole session. Worth knowing if a long
+conversation touching lots of images/documents ever becomes a real memory
+problem on lower-end mobile devices: this is the first place to revisit.
 
 **Why English → French translation, not French generation directly:** small
 generalist chat models like `chat` here are noticeably weaker writing French

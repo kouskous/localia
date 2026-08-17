@@ -1,6 +1,6 @@
 import { TextStreamer, type Message } from '@huggingface/transformers'
 import { extractPdfText } from './pdf'
-import { disposeSpecialist, loadSpecialist } from './pipelines'
+import { loadSpecialist } from './pipelines'
 import { SPECIALISTS, type SpecialistId } from './specialists'
 import type { AgentEvent, AgentTurnInput } from './types'
 
@@ -57,16 +57,10 @@ function stripThink(text: string): string {
  */
 export async function runAgentTurn(input: AgentTurnInput, emit: (event: AgentEvent) => void): Promise<void> {
   const observations: string[] = []
-  // caption/summarize/qa are only used situationally (depending on what was
-  // attached) — track which ones this turn actually loaded so their weights
-  // can be freed before the two heavier models (chat, translate) run. chat
-  // and translate are used on every turn, so they stay cached indefinitely.
-  const situational = new Set<SpecialistId>()
 
   for (const image of input.images) {
     emit({ type: 'step', label: SPECIALISTS.caption.actionLabel })
     const captioner = await loadSpecialist('caption', reportLoad('caption', emit))
-    situational.add('caption')
     const [result] = await captioner(image.blob)
     if (result?.generated_text) {
       observations.push(`Image "${image.name}": ${result.generated_text.trim()}`)
@@ -85,7 +79,6 @@ export async function runAgentTurn(input: AgentTurnInput, emit: (event: AgentEve
     if (looksLikeQuestion(input.text)) {
       emit({ type: 'step', label: SPECIALISTS.qa.actionLabel })
       const answerer = await loadSpecialist('qa', reportLoad('qa', emit))
-      situational.add('qa')
       const result = await answerer(input.text, text)
       if (result?.answer) {
         observations.push(
@@ -95,15 +88,12 @@ export async function runAgentTurn(input: AgentTurnInput, emit: (event: AgentEve
     } else {
       emit({ type: 'step', label: SPECIALISTS.summarize.actionLabel })
       const summarizer = await loadSpecialist('summarize', reportLoad('summarize', emit))
-      situational.add('summarize')
       const [result] = await summarizer(text, { max_new_tokens: 120 })
       if (result?.summary_text) {
         observations.push(`Résumé de "${doc.name}": ${result.summary_text.trim()}`)
       }
     }
   }
-
-  await Promise.all([...situational].map(disposeSpecialist))
 
   emit({ type: 'step', label: SPECIALISTS.chat.actionLabel })
   const chat = await loadSpecialist('chat', reportLoad('chat', emit))
