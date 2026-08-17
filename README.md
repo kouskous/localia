@@ -19,7 +19,8 @@ Key building blocks:
   (auto-growing textarea, attachments, drag & drop), message list and
   bubbles, streaming/processing indicator, drop overlay.
 - `src/components/LoadingScreen.vue` — the first-run intro screen, driven
-  by real model-download progress (see below), not a fake timer.
+  by real, byte-weighted download progress across `chat` + `translate`
+  (see below), not a fake timer.
 
 Motion respects `prefers-reduced-motion`, and the layout is designed for
 desktop, tablet and mobile (keyboard-safe composer, full-height
@@ -54,7 +55,10 @@ and cached by the browser after first use.
   worker, mirrors its events into reactive chat state, and recreates the
   worker on cancel (generation isn't cooperatively abortable, so a hard stop
   means terminating and respawning it — cached weights make the respawn
-  quick, just not instant).
+  quick, just not instant). At boot, the worker downloads `chat` and
+  `translate` in parallel (both are used on every turn, so there's no
+  reason to make the first reply wait on a second download mid-conversation)
+  and reports one combined, byte-weighted progress for the loading screen.
 
 **Memory:** a loaded specialist's weights sit decompressed in the worker's
 memory (RAM for the WASM backend, VRAM for WebGPU) for as long as it stays
