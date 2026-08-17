@@ -1,6 +1,6 @@
 import type { DataType, PipelineType } from '@huggingface/transformers'
 
-export type SpecialistId = 'chat' | 'caption' | 'summarize' | 'qa'
+export type SpecialistId = 'chat' | 'caption' | 'summarize' | 'qa' | 'translate'
 
 export interface SpecialistConfig<T extends PipelineType = PipelineType> {
   id: SpecialistId
@@ -43,5 +43,14 @@ export const SPECIALISTS = {
     task: 'question-answering',
     model: 'Xenova/distilbert-base-uncased-distilled-squad',
     actionLabel: 'Recherche de la réponse…',
+  },
+  // `chat` reasons and drafts in English — by far its strongest language at
+  // this size — and this specialist turns that into fluent French, which a
+  // small generalist chat model can't reliably do on its own.
+  translate: {
+    id: 'translate',
+    task: 'translation',
+    model: 'Xenova/nllb-200-distilled-600M',
+    actionLabel: 'Traduction en français…',
   },
 } satisfies Record<SpecialistId, SpecialistConfig>
