@@ -46,14 +46,16 @@ export const SPECIALISTS = {
   },
   // `chat` reasons and drafts in English — by far its strongest language at
   // this size — and this specialist turns that into fluent French, which a
-  // small generalist chat model can't reliably do on its own. A MarianMT
-  // model trained specifically for EN→FR (~74M params) rather than a
-  // multilingual model covering 200 languages (~600M) — much lighter to
-  // download, and often *better* on this one pair for being a specialist.
+  // small generalist chat model can't reliably do on its own. NLLB is a
+  // modern, well-regarded multilingual model — noticeably more fluent and
+  // grammatically consistent on high-resource pairs like EN→FR than the
+  // older bilingual opus-mt-en-fr, at the cost of a heavier (~600M param)
+  // download. Chosen deliberately over the lighter option: translation
+  // quality (no grammar mistakes) matters more here than download size.
   translate: {
     id: 'translate',
     task: 'translation',
-    model: 'Xenova/opus-mt-en-fr',
+    model: 'Xenova/nllb-200-distilled-600M',
     actionLabel: 'Traduction en français…',
   },
 } satisfies Record<SpecialistId, SpecialistConfig>
