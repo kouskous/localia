@@ -34,6 +34,57 @@ function reportLoad(id: SpecialistId, emit: (event: AgentEvent) => void) {
   }
 }
 
+/** How many trailing characters of `str` could be the start of `tag`. */
+function trailingPartialTagLength(str: string, tag: string): number {
+  const max = Math.min(str.length, tag.length - 1)
+  for (let len = max; len > 0; len -= 1) {
+    if (str.endsWith(tag.slice(0, len))) return len
+  }
+  return 0
+}
+
+const THINK_OPEN = '<think>'
+const THINK_CLOSE = '</think>'
+
+/**
+ * Qwen3 "thinks out loud" as literal `<think>…</think>` text before its
+ * real answer — `enable_thinking: false` (passed at the call site) is
+ * supposed to turn that off, but this filter is a defensive backstop in
+ * case a given quantized build doesn't honour the flag: it strips
+ * anything between the tags (streamed token-by-token, so tags can split
+ * across chunks) and only forwards the visible answer.
+ */
+function createThinkFilter(onVisible: (text: string) => void) {
+  let buffer = ''
+  let thinking = false
+
+  return (chunk: string) => {
+    buffer += chunk
+    for (;;) {
+      if (!thinking) {
+        const start = buffer.indexOf(THINK_OPEN)
+        if (start === -1) {
+          const keep = trailingPartialTagLength(buffer, THINK_OPEN)
+          if (keep < buffer.length) onVisible(buffer.slice(0, buffer.length - keep))
+          buffer = buffer.slice(buffer.length - keep)
+          return
+        }
+        onVisible(buffer.slice(0, start))
+        buffer = buffer.slice(start + THINK_OPEN.length)
+        thinking = true
+      } else {
+        const end = buffer.indexOf(THINK_CLOSE)
+        if (end === -1) {
+          buffer = buffer.slice(buffer.length - trailingPartialTagLength(buffer, THINK_CLOSE))
+          return
+        }
+        buffer = buffer.slice(end + THINK_CLOSE.length)
+        thinking = false
+      }
+    }
+  }
+}
+
 /**
  * Runs one agentic turn: inspect what the user attached, dispatch each
  * piece to the small specialist model suited to it, then hand everything
@@ -98,16 +149,25 @@ export async function runAgentTurn(input: AgentTurnInput, emit: (event: AgentEve
   ]
 
   let streamed = ''
+  const emitVisible = createThinkFilter((visible) => {
+    if (!visible) return
+    streamed += visible
+    emit({ type: 'token', token: visible })
+  })
   const streamer = new TextStreamer(chat.tokenizer, {
     skip_prompt: true,
     skip_special_tokens: true,
-    callback_function: (token: string) => {
-      streamed += token
-      emit({ type: 'token', token })
-    },
+    callback_function: emitVisible,
   })
 
-  await chat(messages, { max_new_tokens: 260, do_sample: false, streamer })
+  await chat(messages, {
+    max_new_tokens: 260,
+    do_sample: false,
+    streamer,
+    // Qwen3 defaults to a reasoning pass before answering; we want the
+    // direct answer, not the reasoning transcript.
+    tokenizer_encode_kwargs: { enable_thinking: false },
+  })
 
   if (!streamed.trim()) {
     // Extremely unlikely fallback: streamer produced nothing usable.
