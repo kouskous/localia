@@ -1,20 +1,31 @@
 import type { Message } from '@huggingface/transformers'
 import { loadSpecialist } from './pipelines'
-import type { ToolDescriptor } from './tools'
+import type { ToolSchema } from './tools'
 
-export type PlannedAction = { type: 'tool'; name: string; args: string } | { type: 'ready' }
+export type PlannedAction = { type: 'tool'; name: string; args: Record<string, unknown> } | { type: 'ready' }
 
-function buildSystemPrompt(tools: ToolDescriptor[]): string {
-  const toolList = tools.map((tool) => `- ${tool.name}: ${tool.description}`).join('\n')
+/** A concrete filled-in example, generated from the schema, for the model to imitate. */
+function exampleCall(tool: ToolSchema): string {
+  const placeholderArgs: Record<string, string> = {}
+  for (const key of Object.keys(tool.function.parameters.properties)) {
+    placeholderArgs[key] = `<${key}>`
+  }
+  const call = JSON.stringify({ name: tool.function.name, arguments: placeholderArgs })
+  return `<tool_call>${call}</tool_call>`
+}
+
+function buildSystemPrompt(tools: ToolSchema[]): string {
+  const toolList = tools
+    .map((tool) => `- ${tool.function.name}: ${tool.function.description}\n  Example: ${exampleCall(tool)}`)
+    .join('\n')
   return (
     "You are Localia's planner: decide the single next step before answering the user. " +
     'You may call one tool to gather information, or say you are ready to answer if you ' +
     'already have enough. Only call a tool when it would genuinely help — greetings and ' +
     "small talk never need one, and don't call the same tool with the same arguments twice.\n\n" +
     `Available tools:\n${toolList}\n\n` +
-    'Reply with EXACTLY one of the following, and nothing else:\n' +
-    'TOOL: <tool name>\nARGS: <arguments>\n\n' +
-    'or, if no tool is needed:\nREADY'
+    'To call a tool, reply with EXACTLY one tool_call tag like the examples above, filled in ' +
+    'with real values, and nothing else. If no tool is needed, reply with exactly: READY'
   )
 }
 
@@ -28,7 +39,7 @@ function buildSystemPrompt(tools: ToolDescriptor[]): string {
 export async function planNextAction(
   question: string,
   observations: string[],
-  tools: ToolDescriptor[],
+  tools: ToolSchema[],
 ): Promise<PlannedAction> {
   const chat = await loadSpecialist('chat')
 
@@ -42,25 +53,42 @@ export async function planNextAction(
   ]
 
   const [result] = await chat(messages, {
-    max_new_tokens: 60,
+    max_new_tokens: 120,
     do_sample: false,
+    // Best-effort: passed through to the model's own chat template in case
+    // it renders its own tool-calling instructions on top of ours — see
+    // README for why the ones in buildSystemPrompt above don't depend on it.
+    tools,
     tokenizer_encode_kwargs: { enable_thinking: false },
   })
 
   const content = result?.generated_text.at(-1)?.content
-  return parseAction(typeof content === 'string' ? content : '')
+  const raw = typeof content === 'string' ? content : ''
+  const action = parseAction(raw)
+  // Visibility fix: a planning round that decides "ready" and one that
+  // silently failed to parse used to look identical from the outside.
+  console.debug('[Localia planner] round output:', raw, '→', action)
+  return action
 }
 
 /**
  * Best-effort parsing of a small model's free-form reply: anything that
- * doesn't match the requested TOOL:/ARGS: format — including the model
- * just answering directly instead of following instructions, which small
- * models occasionally do — falls back to "ready to answer" rather than
- * throwing, same fail-safe philosophy as the rest of this pipeline.
+ * doesn't contain a well-formed <tool_call> JSON block — including the
+ * model just answering directly instead of following instructions, which
+ * small models occasionally do — falls back to "ready to answer" rather
+ * than throwing, same fail-safe philosophy as the rest of this pipeline.
  */
 function parseAction(raw: string): PlannedAction {
-  const clean = raw.replace(/<think>[\s\S]*?<\/think>/gi, '').trim()
-  const match = /TOOL:\s*(\S+)[\s\S]*?ARGS:\s*(.+)/i.exec(clean)
+  const clean = raw.replace(/<think>[\s\S]*?<\/think>/gi, '')
+  const match = /<tool_call>([\s\S]*?)<\/tool_call>/i.exec(clean)
   if (!match) return { type: 'ready' }
-  return { type: 'tool', name: match[1].toLowerCase(), args: match[2].trim() }
+
+  try {
+    const parsed = JSON.parse(match[1].trim()) as { name?: unknown; arguments?: unknown }
+    if (typeof parsed.name !== 'string' || !parsed.name.trim()) return { type: 'ready' }
+    const args = parsed.arguments && typeof parsed.arguments === 'object' ? (parsed.arguments as Record<string, unknown>) : {}
+    return { type: 'tool', name: parsed.name.trim().toLowerCase(), args }
+  } catch {
+    return { type: 'ready' }
+  }
 }

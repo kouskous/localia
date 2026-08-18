@@ -9,8 +9,8 @@ import type { AgentEvent, AgentTurnInput } from './types'
 /** How many tool calls the planner may make in a row before we force an answer. */
 const MAX_TOOL_ROUNDS = 3
 
-const TOOL_STEP_LABELS: Record<string, (args: string) => string> = {
-  search_wikipedia: (args) => `Recherche sur Wikipédia : ${args}…`,
+const TOOL_STEP_LABELS: Record<string, (args: Record<string, unknown>) => string> = {
+  search_wikipedia: (args) => `Recherche sur Wikipédia : ${typeof args.query === 'string' ? args.query : ''}…`,
   search_document: () => 'Recherche dans le document…',
   summarize_document: () => 'Résumé du document…',
 }
@@ -119,7 +119,7 @@ export async function runAgentTurn(input: AgentTurnInput, emit: (event: AgentEve
       const action = await planNextAction(question, observations, tools)
       if (action.type === 'ready') break
 
-      const callKey = `${action.name}:${action.args}`
+      const callKey = JSON.stringify({ name: action.name, args: action.args })
       if (calledBefore.has(callKey)) break
       calledBefore.add(callKey)
 

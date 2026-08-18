@@ -43,22 +43,33 @@ and cached by the browser after first use.
     question-answering over document text
 - `src/ai/tools.ts` — the tools the agent can choose to call: `search_wikipedia`
   (always on offer), plus `search_document` / `summarize_document` once at
-  least one document is attached, each described in plain text (name +
-  what it does + its expected `ARGS`). `runTool(name, args, documents)`
-  executes one and returns a plain-text observation — a Wikipedia extract,
-  an extractive-QA answer with confidence, or a document summary.
+  least one document is attached, each described as an OpenAI/Hermes-style
+  JSON-Schema function definition (`ToolSchema` — name, description,
+  typed `parameters`). `runTool(name, args, documents)` executes one,
+  reading structured `args` (e.g. `args.query`), and returns a plain-text
+  observation — a Wikipedia extract, an extractive-QA answer with
+  confidence, or a document summary.
 - `src/ai/planner.ts` — `planNextAction(question, observations, tools)`,
   the decision core of the agentic loop: one small `chat` call that reads
   the user's message and what's been gathered so far, and replies with
-  either `TOOL: <name>` + `ARGS: <arguments>` or `READY`. This is the model
-  itself choosing which tool to call, if any — not a keyword list, not
-  even a separate fixed "extract search concepts" step (the previous
-  iteration) — it can ask for `search_wikipedia` with "soleil", read the
-  result, then ask for it again with "lune", then decide it's ready.
-  Best-effort parsing: a reply that doesn't match the requested format
-  (including the model just answering directly, which small models
-  occasionally do despite instructions) falls back to "ready", same
-  fail-safe philosophy as the rest of this pipeline.
+  either a Hermes-style `<tool_call>{"name": "...", "arguments": {...}}</tool_call>`
+  JSON block or `READY`. This is the model itself choosing which tool to
+  call, if any — not a keyword list, not a separate fixed "extract search
+  concepts" step — it can ask for `search_wikipedia` with `{"query":
+  "soleil"}`, read the result, then ask again with `{"query": "lune"}`,
+  then decide it's ready. The system prompt spells out a concrete filled-in
+  example call per tool (generated from each `ToolSchema`) rather than
+  only an abstract format description, since a small model imitates a
+  literal example far more reliably than it follows prose instructions.
+  Every round's raw model output and parsed result is logged via
+  `console.debug('[Localia planner] round output:', ...)` — with nothing
+  else surfacing what the model actually said, "no tool got called" and
+  "the model correctly decided none was needed" were indistinguishable
+  from outside the browser console. Best-effort parsing: a reply with no
+  well-formed `<tool_call>` block — including the model just answering
+  directly, which small models occasionally do despite instructions —
+  falls back to "ready", same fail-safe philosophy as the rest of this
+  pipeline.
 - `src/ai/orchestrator.ts` — the agentic loop. Attached images are always
   described (captioning isn't a "choice" — if it's attached, look at it)
   and document text is always read, but from there `chat` drives itself:
@@ -75,19 +86,29 @@ and cached by the browser after first use.
   attachment processing, so a follow-up that references an earlier image
   relies on that image having been described in the assistant's own prior
   reply.
-  **Why a hand-rolled `TOOL:`/`ARGS:` protocol instead of Transformers.js's
-  native `tools` chat-template parameter:** that parameter exists and is
-  the more "official" route (see `apply_chat_template`'s `tools` option),
-  but it delegates the actual `tool_calls` message shape entirely to
-  `onnx-community/Qwen3-0.6B-ONNX`'s own bundled Jinja chat template — one
-  more Hub-hosted file this sandbox has no network access to inspect (see
-  known limitations). A plain-text instruction the planner is asked to
-  follow is fully within this repo, directly testable the same way the
-  `<think>`-tag filter and the old intent parser were tested, and doesn't
-  bet the whole loop on an unverified template detail. Worth revisiting
-  once this is confirmed working live: the native path would fold tool
-  definitions and parsing into the model's own fine-tuned format instead
-  of a bespoke one.
+  **Second attempt at the wire format:** the first version of this loop
+  asked the planner for a bespoke `TOOL: <name>` / `ARGS: <arguments>` /
+  `READY` text format. Live testing showed it never actually triggered a
+  Wikipedia call — with no logging at the time, a parse failure and a
+  genuine "no tool needed" were indistinguishable, so this was hard to
+  diagnose from the outside. The current `<tool_call>` JSON format is a
+  second, hopefully more reliable attempt, for two reasons: it mirrors the
+  Hermes-style function-calling format Qwen models are widely instruction-
+  tuned to produce, so there's a reasonable chance the model already
+  "knows" this shape from training rather than needing to learn a novel
+  one from scratch; and the `console.debug` logging above means a repeat
+  of "it's not working" is now diagnosable from the browser console
+  instead of a black box. `planNextAction` also passes the `ToolSchema[]`
+  through as the `tools` field in `generate_kwargs` — Transformers.js
+  forwards that straight into `apply_chat_template`'s Jinja rendering
+  (`tokenizer_encode_kwargs` sibling option), so *if*
+  `onnx-community/Qwen3-0.6B-ONNX`'s own bundled chat template supports
+  structured tool use, this gets it for free; if it doesn't, the option is
+  simply ignored per Transformers.js's own docs. Either way the loop
+  doesn't depend on it — the system prompt's own spelled-out example
+  carries the whole instruction on its own, which is what makes this
+  testable without needing to inspect that template (a Hub-hosted file
+  this sandbox has no network access to — see known limitations).
 - `src/ai/wikipedia.ts` — `searchWikipedia(query)`, a single most-relevant
   article lookup via the MediaWiki Action API (`fr.wikipedia.org`, CORS via
   the documented `origin=*` param, no key needed), called by the
@@ -174,12 +195,13 @@ lower than on English ones. The assistant's replies are in English (see
 above) while the rest of the UI is French. There's no OCR, so
 scanned PDFs and `.docx`/`.rtf` files aren't read (the assistant is told to
 say so rather than guess). The agentic tool-calling loop (`planner.ts`)
-asks a 0.6B model to reliably follow a `TOOL:`/`ARGS:`/`READY` text
-protocol every round — small models are less consistent at following
-formatting instructions than larger ones, so expect occasional rounds
-where it just answers directly instead of asking for a tool it arguably
-needed, or asks for one it didn't; the fallback in both cases is simply
-"proceed as if ready," never a broken turn. None of this was
+asks a 0.6B model to reliably emit a `<tool_call>`/`READY` protocol every
+round — small models are less consistent at following formatting
+instructions than larger ones, so expect occasional rounds where it just
+answers directly instead of asking for a tool it arguably needed, or asks
+for one it didn't; the fallback in both cases is simply "proceed as if
+ready," never a broken turn. Check the browser console for `[Localia
+planner]` logs to see exactly what happened on any given turn. None of this was
 runtime-tested against the real Hugging Face CDN or `fr.wikipedia.org`
 from the environment this was built in — its network egress is sandboxed
 to a small allowlist that excludes both; the code is correct against each
