@@ -1,31 +1,10 @@
 import { TextStreamer, type Message } from '@huggingface/transformers'
+import { analyzeIntent } from './intent'
 import { extractPdfText } from './pdf'
 import { loadSpecialist } from './pipelines'
 import { SPECIALISTS, type SpecialistId } from './specialists'
 import type { AgentEvent, AgentTurnInput } from './types'
 import { searchWikipedia } from './wikipedia'
-
-const QUESTION_HINTS = [
-  '?',
-  'combien',
-  'quel',
-  'quelle',
-  'quels',
-  'quelles',
-  'quand',
-  'qui',
-  'où',
-  'pourquoi',
-  'comment',
-  'total',
-  'montant',
-  'date',
-]
-
-function looksLikeQuestion(text: string): boolean {
-  const lower = text.toLowerCase()
-  return QUESTION_HINTS.some((hint) => lower.includes(hint))
-}
 
 function reportLoad(id: SpecialistId, emit: (event: AgentEvent) => void) {
   return (info: { status: string; progress?: number }) => {
@@ -95,6 +74,16 @@ function createThinkFilter(onVisible: (text: string) => void) {
 export async function runAgentTurn(input: AgentTurnInput, emit: (event: AgentEvent) => void): Promise<void> {
   const observations: string[] = []
 
+  // Let `chat` itself read the message rather than matching it against a
+  // fixed French keyword list — it decides whether this is a factual
+  // question worth grounding, and pulls out the specific concepts worth
+  // looking up (see intent.ts).
+  let intent = { isQuestion: false, concepts: [] as string[] }
+  if (input.text.trim()) {
+    emit({ type: 'step', label: 'Analyse de la demande…' })
+    intent = await analyzeIntent(input.text)
+  }
+
   for (const image of input.images) {
     emit({ type: 'step', label: SPECIALISTS.caption.actionLabel })
     const captioner = await loadSpecialist('caption', reportLoad('caption', emit))
@@ -113,7 +102,7 @@ export async function runAgentTurn(input: AgentTurnInput, emit: (event: AgentEve
       continue
     }
 
-    if (looksLikeQuestion(input.text)) {
+    if (intent.isQuestion) {
       emit({ type: 'step', label: SPECIALISTS.qa.actionLabel })
       const answerer = await loadSpecialist('qa', reportLoad('qa', emit))
       const result = await answerer(input.text, text)
@@ -133,13 +122,17 @@ export async function runAgentTurn(input: AgentTurnInput, emit: (event: AgentEve
   }
 
   // Only reach for Wikipedia when there's nothing else grounding the
-  // answer already (an attached image/document) and the message actually
-  // looks like a question — not on every "salut" or "merci".
-  if (input.images.length === 0 && input.documents.length === 0 && looksLikeQuestion(input.text)) {
+  // answer already (an attached image/document) and `chat` actually
+  // extracted concepts worth looking up. One focused search per concept
+  // — e.g. "qui est plus grand le soleil ou la lune" becomes two searches
+  // ("soleil", "lune") instead of one noisy query on the full sentence,
+  // giving the final answer two clean, relevant extracts instead of one
+  // diluted one.
+  if (input.images.length === 0 && input.documents.length === 0 && intent.concepts.length > 0) {
     emit({ type: 'step', label: 'Recherche sur Wikipédia…' })
-    const wiki = await searchWikipedia(input.text)
-    if (wiki) {
-      observations.push(`Wikipedia — "${wiki.title}": ${wiki.extract}`)
+    const results = await Promise.all(intent.concepts.map((concept) => searchWikipedia(concept)))
+    for (const wiki of results) {
+      if (wiki) observations.push(`Wikipedia — "${wiki.title}": ${wiki.extract}`)
     }
   }
 

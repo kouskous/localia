@@ -41,26 +41,38 @@ and cached by the browser after first use.
   - `summarize` — `Xenova/distilbart-cnn-6-6`, summarizes long documents
   - `qa` — `Xenova/distilbert-base-uncased-distilled-squad`, extractive
     question-answering over document text
-- `src/ai/orchestrator.ts` — the agentic loop: inspect what was attached,
-  route each piece to the specialist suited to it (image → caption,
-  document + question → QA, document alone → summarize). If nothing was
-  attached and the message looks like a question, `src/ai/wikipedia.ts`
-  looks it up on French Wikipedia (the one external, network-dependent
-  step — everything else in this app runs fully offline once models are
-  cached) so the model isn't limited to what a small local LLM already
-  knows. All of that — attachment observations, a Wikipedia extract if
-  found, recent conversation history — goes to `chat`, which composes and
-  streams the final English reply directly — no separate translation
-  stage. `useAgent.ts` builds that history from the last
-  `MAX_HISTORY_MESSAGES` (10) non-empty messages each turn — it's just past
-  message text, not re-run attachment processing, so a follow-up that
-  references an earlier image relies on that image having been described in
-  the assistant's own prior reply.
-- `src/ai/wikipedia.ts` — `searchWikipedia(query)`, a single most-relevant
-  article lookup via the MediaWiki Action API (`fr.wikipedia.org`, CORS via
-  the documented `origin=*` param, no key needed). French, not English,
-  Wikipedia — the user's query is in French, and matching the query's own
-  language scores far better than searching French wording against an
+- `src/ai/intent.ts` — `analyzeIntent(text)`, one small `chat` call that
+  reads the raw message and decides (a) whether it's a factual question
+  worth grounding, and (b) up to 3 short search concepts worth looking up —
+  e.g. "qui est plus grand le soleil ou la lune" yields `soleil` and `lune`
+  as two separate concepts, not one noisy query on the full sentence. This
+  replaces an earlier fixed French keyword list (`?`, `quel`, `qui`, …):
+  asking the model to read the message handles phrasings no hardcoded list
+  would catch, at the cost of one extra small generation per turn.
+  Best-effort parsing of the model's two-line reply — anything that doesn't
+  match falls back to "not a question, nothing to look up" rather than
+  throwing, same fail-safe philosophy as the rest of this pipeline.
+- `src/ai/orchestrator.ts` — the agentic loop: run `analyzeIntent` on the
+  message first, then route each attachment to the specialist suited to it
+  (image → caption, document + `intent.isQuestion` → QA, document alone →
+  summarize). If nothing was attached and `intent.concepts` came back
+  non-empty, `src/ai/wikipedia.ts` runs one lookup per concept, in parallel
+  (the one external, network-dependent step — everything else in this app
+  runs fully offline once models are cached) so the model isn't limited to
+  what a small local LLM already knows. All of that — attachment
+  observations, any Wikipedia extracts found, recent conversation history —
+  goes to `chat`, which composes and streams the final English reply
+  directly — no separate translation stage. `useAgent.ts` builds that
+  history from the last `MAX_HISTORY_MESSAGES` (10) non-empty messages each
+  turn — it's just past message text, not re-run attachment processing, so
+  a follow-up that references an earlier image relies on that image having
+  been described in the assistant's own prior reply.
+- `src/ai/wikipedia.ts` — `searchWikipedia(concept)`, a single
+  most-relevant article lookup via the MediaWiki Action API
+  (`fr.wikipedia.org`, CORS via the documented `origin=*` param, no key
+  needed), called once per concept `analyzeIntent` extracted. French, not
+  English, Wikipedia — concepts come out of a French message, and matching
+  that language scores far better than searching French wording against an
   English-language index. Best-effort: any failure resolves to no result
   rather than breaking the turn. Not runtime-tested from this sandbox (see
   known limitations) — needs a live test pass once deployed.
