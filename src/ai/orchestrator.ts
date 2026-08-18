@@ -134,8 +134,14 @@ export async function runAgentTurn(input: AgentTurnInput, emit: (event: AgentEve
   emit({ type: 'step', label: SPECIALISTS.chat.actionLabel })
   const chat = await loadSpecialist('chat', reportLoad('chat', emit))
 
+  // English on purpose: at this model size, French generation was
+  // noticeably weaker (grammar mistakes), and the two attempts at fixing
+  // that — a separate translation stage, then a bigger French-native
+  // model — each traded that problem for a worse one (translation-specific
+  // failures, then an out-of-memory crash). English is simply what this
+  // small model is reliably good at.
   const systemPrompt =
-    'You are Localia, a minimal AI assistant having an ongoing conversation. Answer in French, ' +
+    'You are Localia, a minimal AI assistant having an ongoing conversation. Answer in English, ' +
     'clearly and concisely, based on the conversation so far and the information provided below ' +
     'if it exists. Do not invent anything.'
 

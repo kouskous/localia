@@ -19,13 +19,12 @@ export interface SpecialistConfig<T extends PipelineType = PipelineType> {
 // `task` as its own literal type instead of widening to `PipelineType`, so
 // callers get back the specific pipeline type for the id they asked for.
 export const SPECIALISTS = {
-  // Qwen3-1.7B-ONNX was tried here to get better French directly (see
-  // README) but failed to even create an ONNX Runtime session in the
-  // browser — "Can't create a session... std::bad_alloc" — the WASM
-  // backend couldn't allocate enough memory for a model that size,
-  // regardless of quantization. Reverted to the 0.6B checkpoint, which is
-  // proven to actually run. French quality at this size is the known
-  // trade-off (see README) until a better-fitting solution is found.
+  // Simple by design: this small model answers in English (its strongest
+  // language, see orchestrator.ts), with no translation stage. Both of the
+  // alternatives tried — draft-in-English-then-translate, and a bigger
+  // French-native checkpoint — traded the original weak-French problem for
+  // a worse one (translation-specific failures, then an out-of-memory
+  // crash on the bigger model). See README for the full history.
   chat: {
     id: 'chat',
     task: 'text-generation',

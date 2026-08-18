@@ -34,7 +34,7 @@ and cached by the browser after first use.
 
 - `src/ai/specialists.ts` — the model registry, one small model per domain:
   - `chat` — `onnx-community/Qwen3-0.6B-ONNX` (q4f16), the generalist that
-    composes the final answer — directly in French (see below)
+    composes the final answer — in English (see below)
   - `caption` — `Xenova/vit-gpt2-image-captioning`, describes attached images
   - `summarize` — `Xenova/distilbart-cnn-6-6`, summarizes long documents
   - `qa` — `Xenova/distilbert-base-uncased-distilled-squad`, extractive
@@ -43,7 +43,7 @@ and cached by the browser after first use.
   route each piece to the specialist suited to it (image → caption,
   document + question → QA, document alone → summarize), then hand the
   gathered observations plus recent conversation history to `chat`, which
-  composes and streams the final French reply directly — no separate
+  composes and streams the final English reply directly — no separate
   translation stage. `useAgent.ts` builds that history from the last
   `MAX_HISTORY_MESSAGES` (10) non-empty messages each turn — it's just past
   message text, not re-run attachment processing, so a follow-up that
@@ -80,41 +80,50 @@ of "load once, stay cached" for the whole session. Worth knowing if a long
 conversation touching lots of images/documents ever becomes a real memory
 problem on lower-end mobile devices: this is the first place to revisit.
 
-**Why `chat` answers directly in French now, and why it's still 0.6B:**
-earlier versions had `chat` draft in English — its most reliable language
-at that size — and a separate translation specialist convert that into
-French, since direct French generation from the 0.6B checkpoint was
-noticeably weaker than its English. That worked, but cost a second
-sequential generation every turn, a second model download, and several
-rounds chasing translation-specific issues (quantization availability,
-language-code mismatches between model families). Landing on a translation
-model alone went through three: `opus-mt-en-fr` (~74M, bilingual, too
-basic — grammar mistakes), `nllb-200-distilled-600M` (better, too heavy a
-download), `m2m100_418M` (NLLB's predecessor, a lighter middle ground).
+**Why `chat` answers in English, not French — the full history:** the
+assistant's reply language went through three iterations.
 
-Rather than keep tuning that second stage, `chat` was upgraded to
-`onnx-community/Qwen3-1.7B-ONNX` and asked to answer in French directly —
-multilingual quality scales favorably with size within a model family, and
-0.6B is the weakest tier for that specifically. **This failed in the
-browser**: `Error: Can't create a session. ERROR_CODE: 6, ERROR_MESSAGE:
-std::bad_alloc` — the WASM backend couldn't allocate enough memory to even
-initialize a session for a model that size, independent of quantization
-(q4f16 didn't save it). Reverted to `onnx-community/Qwen3-0.6B-ONNX`, kept
-the simplified single-generation-pass architecture (no translation stage,
-direct streaming) since that part of the change was sound, and kept the
-system prompt asking for French directly rather than reinstating
-translation. Net effect: simpler, faster (one generation instead of two),
-but French quality is back to the original known weakness at this size —
-unresolved. Next things worth trying: a smaller multilingual-balanced model
-(not just a bigger one in the same English-leaning family), or reinstating
-a lightweight translation stage now that the rest of the pipeline is
-simpler.
+1. **English draft + separate translation model.** `chat` (0.6B) drafted in
+   English — its most reliable language at that size — and a dedicated
+   translation specialist converted that into French, since direct French
+   generation from the 0.6B checkpoint was noticeably weaker than its
+   English. This worked, but cost a second sequential generation every
+   turn, a second model download, and several rounds chasing translation-
+   specific issues. Finding a translation model alone took three tries:
+   `opus-mt-en-fr` (~74M, bilingual, too basic — grammar mistakes),
+   `nllb-200-distilled-600M` (better, too heavy a download), `m2m100_418M`
+   (NLLB's predecessor, a lighter middle ground).
+2. **A bigger, French-native `chat` model.** Rather than keep tuning the
+   translation stage, `chat` was upgraded to `onnx-community/Qwen3-1.7B-
+   ONNX` and asked to answer in French directly — multilingual quality
+   scales favorably with size within a model family, and 0.6B is the
+   weakest tier for that specifically. **This failed in the browser**:
+   `Error: Can't create a session. ERROR_CODE: 6, ERROR_MESSAGE:
+   std::bad_alloc` — the WASM backend couldn't allocate enough memory to
+   even initialize a session for a model that size, independent of
+   quantization (q4f16 didn't save it). A hard crash, not a quality
+   problem — the whole app stopped working.
+3. **Back to `chat` (0.6B), answering in English.** Both attempts to get
+   French had traded the original weak-French problem for a worse one
+   (translation-specific failures, then an out-of-memory crash). Simplest
+   fix: keep the small, proven-working model, and let it answer in the one
+   language it's actually reliable at. Kept the simplified single-
+   generation-pass architecture from step 2 (no translation stage, direct
+   token streaming) since that part was sound — only the model size and
+   target language were the problem.
+
+**Net result:** the assistant currently replies in English. The UI chrome
+(buttons, placeholders, the loading screen) is still French, so this is a
+deliberate, known trade-off — not a bug — until a better-fitting solution
+for French quality at this scale is found (a smaller multilingual-balanced
+model, rather than either a same-family upsize or a bolted-on translation
+stage, would be the next thing worth trying).
 
 **Known limitations, honestly:** these are genuinely small models, chosen to
 keep downloads light rather than for peak accuracy. `caption`/`summarize`/`qa`
-still produce English internally (only visible to `chat`, not the user) —
-accuracy on French source documents may still be lower than on English
-ones, since these models were trained on English data. There's no OCR, so
+were trained on English data, so accuracy on French source documents may be
+lower than on English ones. The assistant's replies are in English (see
+above) while the rest of the UI is French. There's no OCR, so
 scanned PDFs and `.docx`/`.rtf` files aren't read (the assistant is told to
 say so rather than guess). None of this was runtime-tested against the real
 Hugging Face CDN from the environment this was built in (its network
