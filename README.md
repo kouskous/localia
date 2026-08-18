@@ -41,14 +41,27 @@ and cached by the browser after first use.
     question-answering over document text
 - `src/ai/orchestrator.ts` — the agentic loop: inspect what was attached,
   route each piece to the specialist suited to it (image → caption,
-  document + question → QA, document alone → summarize), then hand the
-  gathered observations plus recent conversation history to `chat`, which
-  composes and streams the final English reply directly — no separate
-  translation stage. `useAgent.ts` builds that history from the last
+  document + question → QA, document alone → summarize). If nothing was
+  attached and the message looks like a question, `src/ai/wikipedia.ts`
+  looks it up on French Wikipedia (the one external, network-dependent
+  step — everything else in this app runs fully offline once models are
+  cached) so the model isn't limited to what a small local LLM already
+  knows. All of that — attachment observations, a Wikipedia extract if
+  found, recent conversation history — goes to `chat`, which composes and
+  streams the final English reply directly — no separate translation
+  stage. `useAgent.ts` builds that history from the last
   `MAX_HISTORY_MESSAGES` (10) non-empty messages each turn — it's just past
   message text, not re-run attachment processing, so a follow-up that
   references an earlier image relies on that image having been described in
   the assistant's own prior reply.
+- `src/ai/wikipedia.ts` — `searchWikipedia(query)`, a single most-relevant
+  article lookup via the MediaWiki Action API (`fr.wikipedia.org`, CORS via
+  the documented `origin=*` param, no key needed). French, not English,
+  Wikipedia — the user's query is in French, and matching the query's own
+  language scores far better than searching French wording against an
+  English-language index. Best-effort: any failure resolves to no result
+  rather than breaking the turn. Not runtime-tested from this sandbox (see
+  known limitations) — needs a live test pass once deployed.
 - `src/ai/pdf.ts` — text-layer extraction for PDFs via `pdfjs-dist` (no OCR:
   scanned/image-only PDFs come back empty and the assistant says so).
 - `src/ai/worker.ts` + `src/composables/useAgent.ts` — all model loading and
@@ -125,12 +138,13 @@ were trained on English data, so accuracy on French source documents may be
 lower than on English ones. The assistant's replies are in English (see
 above) while the rest of the UI is French. There's no OCR, so
 scanned PDFs and `.docx`/`.rtf` files aren't read (the assistant is told to
-say so rather than guess). None of this was runtime-tested against the real
-Hugging Face CDN from the environment this was built in (its network
-egress is sandboxed); the code is correct against the library's own
-documented APIs, but give it a real test pass once deployed, since actual
-model downloads and in-browser inference couldn't be exercised end-to-end
-here.
+say so rather than guess). None of this was runtime-tested against the
+real Hugging Face CDN or `fr.wikipedia.org` from the environment this was
+built in — its network egress is sandboxed to a small allowlist that
+excludes both; the code is correct against each API's own documented
+behavior, but give it a real test pass once deployed, since actual model
+downloads, in-browser inference, and the Wikipedia lookup couldn't be
+exercised end-to-end here.
 
 ## Development
 

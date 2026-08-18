@@ -3,6 +3,7 @@ import { extractPdfText } from './pdf'
 import { loadSpecialist } from './pipelines'
 import { SPECIALISTS, type SpecialistId } from './specialists'
 import type { AgentEvent, AgentTurnInput } from './types'
+import { searchWikipedia } from './wikipedia'
 
 const QUESTION_HINTS = [
   '?',
@@ -128,6 +129,17 @@ export async function runAgentTurn(input: AgentTurnInput, emit: (event: AgentEve
       if (result?.summary_text) {
         observations.push(`Résumé de "${doc.name}": ${result.summary_text.trim()}`)
       }
+    }
+  }
+
+  // Only reach for Wikipedia when there's nothing else grounding the
+  // answer already (an attached image/document) and the message actually
+  // looks like a question — not on every "salut" or "merci".
+  if (input.images.length === 0 && input.documents.length === 0 && looksLikeQuestion(input.text)) {
+    emit({ type: 'step', label: 'Recherche sur Wikipédia…' })
+    const wiki = await searchWikipedia(input.text)
+    if (wiki) {
+      observations.push(`Wikipedia — "${wiki.title}": ${wiki.extract}`)
     }
   }
 
