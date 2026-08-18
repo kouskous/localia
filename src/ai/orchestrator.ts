@@ -154,7 +154,7 @@ export async function runAgentTurn(input: AgentTurnInput, emit: (event: AgentEve
   // small model is reliably good at.
   const systemPrompt =
     'You are Localia, a minimal AI assistant having an ongoing conversation. Answer in English, ' +
-    'clearly and concisely, based on the conversation so far and the information provided below ' +
+    'clearly, based on the conversation so far and the information provided below ' +
     'if it exists. Do not invent anything.'
 
   const contextBlock = observations.length
@@ -180,7 +180,7 @@ export async function runAgentTurn(input: AgentTurnInput, emit: (event: AgentEve
   })
 
   await chat(messages, {
-    max_new_tokens: 300,
+    max_new_tokens: 1000,
     do_sample: false,
     streamer,
     // Qwen3 defaults to a reasoning pass before answering; we want the

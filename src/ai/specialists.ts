@@ -29,7 +29,6 @@ export const SPECIALISTS = {
     id: 'chat',
     task: 'text-generation',
     model: 'onnx-community/Qwen3-0.6B-ONNX',
-    dtype: 'q4f16',
     actionLabel: 'Rédaction de la réponse…',
   },
   caption: {
