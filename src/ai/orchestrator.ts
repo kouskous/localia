@@ -34,26 +34,62 @@ function reportLoad(id: SpecialistId, emit: (event: AgentEvent) => void) {
   }
 }
 
+/** How many trailing characters of `str` could be the start of `tag`. */
+function trailingPartialTagLength(str: string, tag: string): number {
+  const max = Math.min(str.length, tag.length - 1)
+  for (let len = max; len > 0; len -= 1) {
+    if (str.endsWith(tag.slice(0, len))) return len
+  }
+  return 0
+}
+
+const THINK_OPEN = '<think>'
+const THINK_CLOSE = '</think>'
+
 /**
  * Qwen3 "thinks out loud" as literal `<think>…</think>` text before its
  * real answer — `enable_thinking: false` (passed at the call site) is
- * supposed to turn that off, but this strips it regardless in case a given
- * quantized build doesn't honour the flag. Handles an unclosed tag too
- * (generation cut off mid-thought by max_new_tokens).
+ * supposed to turn that off, but this filter is a defensive backstop in
+ * case a given quantized build doesn't honour the flag: it strips
+ * anything between the tags (streamed token-by-token, so tags can split
+ * across chunks) and only forwards the visible answer.
  */
-function stripThink(text: string): string {
-  return text
-    .replace(/<think>[\s\S]*?<\/think>/g, '')
-    .replace(/<think>[\s\S]*$/, '')
-    .trim()
+function createThinkFilter(onVisible: (text: string) => void) {
+  let buffer = ''
+  let thinking = false
+
+  return (chunk: string) => {
+    buffer += chunk
+    for (;;) {
+      if (!thinking) {
+        const start = buffer.indexOf(THINK_OPEN)
+        if (start === -1) {
+          const keep = trailingPartialTagLength(buffer, THINK_OPEN)
+          if (keep < buffer.length) onVisible(buffer.slice(0, buffer.length - keep))
+          buffer = buffer.slice(buffer.length - keep)
+          return
+        }
+        onVisible(buffer.slice(0, start))
+        buffer = buffer.slice(start + THINK_OPEN.length)
+        thinking = true
+      } else {
+        const end = buffer.indexOf(THINK_CLOSE)
+        if (end === -1) {
+          buffer = buffer.slice(buffer.length - trailingPartialTagLength(buffer, THINK_CLOSE))
+          return
+        }
+        buffer = buffer.slice(end + THINK_CLOSE.length)
+        thinking = false
+      }
+    }
+  }
 }
 
 /**
  * Runs one agentic turn: inspect what the user attached, dispatch each
  * piece to the small specialist model suited to it, then hand everything
- * gathered to the generalist chat model to draft the final, grounded
- * reply, and finally have a dedicated translation model turn that draft
- * into the French shown to the user — streamed back token by token.
+ * gathered to the generalist chat model to compose the final, grounded
+ * reply directly in French — streamed back token by token.
  */
 export async function runAgentTurn(input: AgentTurnInput, emit: (event: AgentEvent) => void): Promise<void> {
   const observations: string[] = []
@@ -98,16 +134,10 @@ export async function runAgentTurn(input: AgentTurnInput, emit: (event: AgentEve
   emit({ type: 'step', label: SPECIALISTS.chat.actionLabel })
   const chat = await loadSpecialist('chat', reportLoad('chat', emit))
 
-  // Drafted in English on purpose: at this model size, English is by far
-  // the most reliable language for a small generalist LLM. The dedicated
-  // `translate` specialist below is what actually produces the French the
-  // user sees — much better than asking `chat` to write French directly.
-  // Prior turns in `history` are in French (what the user actually saw),
-  // which Qwen3 reads fine even though it's asked to keep writing English.
   const systemPrompt =
-    'You are Localia, a minimal AI assistant having an ongoing conversation. Prior turns may be ' +
-    'in French. Answer in English, clearly and concisely, based on the conversation so far and ' +
-    'the information provided below if it exists. Do not invent anything.'
+    'You are Localia, a minimal AI assistant having an ongoing conversation. Answer in French, ' +
+    'clearly and concisely, based on the conversation so far and the information provided below ' +
+    'if it exists. Do not invent anything.'
 
   const contextBlock = observations.length
     ? `Gathered information:\n${observations.map((o) => `- ${o}`).join('\n')}\n\n`
@@ -119,39 +149,25 @@ export async function runAgentTurn(input: AgentTurnInput, emit: (event: AgentEve
     { role: 'user', content: `${contextBlock}${input.text || 'Describe what you observe.'}` },
   ]
 
-  const generation = await chat(messages, {
-    max_new_tokens: 260,
+  let streamed = ''
+  const emitVisible = createThinkFilter((visible) => {
+    if (!visible) return
+    streamed += visible
+    emit({ type: 'token', token: visible })
+  })
+  const streamer = new TextStreamer(chat.tokenizer, {
+    skip_prompt: true,
+    skip_special_tokens: true,
+    callback_function: emitVisible,
+  })
+
+  await chat(messages, {
+    max_new_tokens: 300,
     do_sample: false,
+    streamer,
     // Qwen3 defaults to a reasoning pass before answering; we want the
     // direct answer, not the reasoning transcript.
     tokenizer_encode_kwargs: { enable_thinking: false },
-  })
-
-  const generated = generation[0]?.generated_text
-  const rawAnswer = Array.isArray(generated) ? (generated.at(-1)?.content ?? '') : generated
-  const englishAnswer = stripThink(typeof rawAnswer === 'string' ? rawAnswer : '')
-
-  emit({ type: 'step', label: SPECIALISTS.translate.actionLabel })
-  const translator = await loadSpecialist('translate', reportLoad('translate', emit))
-
-  let streamed = ''
-  const streamer = new TextStreamer(translator.tokenizer, {
-    skip_prompt: true,
-    skip_special_tokens: true,
-    callback_function: (token: string) => {
-      if (!token) return
-      streamed += token
-      emit({ type: 'token', token })
-    },
-  })
-
-  // M2M100 uses plain ISO codes ('en'/'fr'), unlike NLLB's FLORES-200
-  // codes ('eng_Latn'/'fra_Latn').
-  await translator(englishAnswer || "I don't have an answer.", {
-    src_lang: 'en',
-    tgt_lang: 'fr',
-    max_new_tokens: 300,
-    streamer,
   })
 
   if (!streamed.trim()) {

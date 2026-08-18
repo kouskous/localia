@@ -2,7 +2,6 @@ import type { Message } from '@huggingface/transformers'
 import './env'
 import { runAgentTurn } from './orchestrator'
 import { loadSpecialist } from './pipelines'
-import type { SpecialistId } from './specialists'
 import type { AgentEvent, AgentDocumentInput, AgentImageInput } from './types'
 
 export interface WorkerRunRequest {
@@ -43,35 +42,18 @@ ctx.addEventListener('message', (event: MessageEvent<WorkerRequest>) => {
   void handleRun(message)
 })
 
-/**
- * `chat` and `translate` are the two specialists used on every turn, so
- * both are downloaded in parallel at boot rather than making the user
- * wait for `translate` mid-conversation on their first reply.
- */
+/** `chat` is used on every turn, so it's downloaded up front at boot. */
 async function preload() {
-  const bytes = new Map<SpecialistId, { loaded: number; total: number }>()
-
-  const reportCombined = (id: SpecialistId) => (info: { status: string; loaded?: number; total?: number }) => {
-    if (info.status !== 'progress_total' || typeof info.loaded !== 'number' || typeof info.total !== 'number') return
-    bytes.set(id, { loaded: info.loaded, total: info.total })
-    let loaded = 0
-    let total = 0
-    for (const b of bytes.values()) {
-      loaded += b.loaded
-      total += b.total
-    }
-    if (total > 0) post({ type: 'boot-progress', progress: (loaded / total) * 100 })
+  try {
+    await loadSpecialist('chat', (info) => {
+      if (info.status === 'progress_total' && typeof info.progress === 'number') {
+        post({ type: 'boot-progress', progress: info.progress })
+      }
+    })
+  } catch {
+    // Swallow: the chat model will simply be retried (and its error
+    // surfaced properly) the first time the user actually sends a message.
   }
-
-  // allSettled, not all: a failure on one shouldn't block the other, and
-  // either way we still want to reach boot-ready — a failed specialist
-  // here just gets retried (with its error surfaced properly) the first
-  // time the user actually needs it.
-  await Promise.allSettled([
-    loadSpecialist('chat', reportCombined('chat')),
-    loadSpecialist('translate', reportCombined('translate')),
-  ])
-
   post({ type: 'boot-ready' })
 }
 

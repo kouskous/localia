@@ -1,6 +1,6 @@
 import type { DataType, PipelineType } from '@huggingface/transformers'
 
-export type SpecialistId = 'chat' | 'caption' | 'summarize' | 'qa' | 'translate'
+export type SpecialistId = 'chat' | 'caption' | 'summarize' | 'qa'
 
 export interface SpecialistConfig<T extends PipelineType = PipelineType> {
   id: SpecialistId
@@ -19,10 +19,15 @@ export interface SpecialistConfig<T extends PipelineType = PipelineType> {
 // `task` as its own literal type instead of widening to `PipelineType`, so
 // callers get back the specific pipeline type for the id they asked for.
 export const SPECIALISTS = {
+  // Larger than the smallest Qwen3 checkpoint on purpose: multilingual
+  // quality scales favorably with size within a model family, and 0.6B was
+  // the weakest tier for that specifically — direct French generation from
+  // it was noticeably weaker than English. 1.7B answers in French directly
+  // (no separate translation stage) at the cost of a bigger download.
   chat: {
     id: 'chat',
     task: 'text-generation',
-    model: 'onnx-community/Qwen3-0.6B-ONNX',
+    model: 'onnx-community/Qwen3-1.7B-ONNX',
     dtype: 'q4f16',
     actionLabel: 'Rédaction de la réponse…',
   },
@@ -43,23 +48,5 @@ export const SPECIALISTS = {
     task: 'question-answering',
     model: 'Xenova/distilbert-base-uncased-distilled-squad',
     actionLabel: 'Recherche de la réponse…',
-  },
-  // `chat` reasons and drafts in English — by far its strongest language at
-  // this size — and this specialist turns that into fluent French, which a
-  // small generalist chat model can't reliably do on its own. M2M100 is
-  // NLLB's direct predecessor (same Meta research lineage) — still a
-  // modern multilingual model, well ahead of the small bilingual
-  // opus-mt-en-fr on fluency for a high-resource pair like EN→FR. Same
-  // 418M-param model as before, but q4f16-quantized (like `chat` above)
-  // rather than the default ~q8, to land closer to a 100-200MB download —
-  // unverified whether this repo publishes a q4f16 ONNX file; if it
-  // doesn't, loading fails cleanly (visible in the console) rather than
-  // silently, and we'd fall back to the unquantized default.
-  translate: {
-    id: 'translate',
-    task: 'translation',
-    model: 'Xenova/m2m100_418M',
-    dtype: 'q4f16',
-    actionLabel: 'Traduction en français…',
   },
 } satisfies Record<SpecialistId, SpecialistConfig>
