@@ -41,41 +41,62 @@ and cached by the browser after first use.
   - `summarize` — `Xenova/distilbart-cnn-6-6`, summarizes long documents
   - `qa` — `Xenova/distilbert-base-uncased-distilled-squad`, extractive
     question-answering over document text
-- `src/ai/intent.ts` — `analyzeIntent(text)`, one small `chat` call that
-  reads the raw message and decides (a) whether it's a factual question
-  worth grounding, and (b) up to 3 short search concepts worth looking up —
-  e.g. "qui est plus grand le soleil ou la lune" yields `soleil` and `lune`
-  as two separate concepts, not one noisy query on the full sentence. This
-  replaces an earlier fixed French keyword list (`?`, `quel`, `qui`, …):
-  asking the model to read the message handles phrasings no hardcoded list
-  would catch, at the cost of one extra small generation per turn.
-  Best-effort parsing of the model's two-line reply — anything that doesn't
-  match falls back to "not a question, nothing to look up" rather than
-  throwing, same fail-safe philosophy as the rest of this pipeline.
-- `src/ai/orchestrator.ts` — the agentic loop: run `analyzeIntent` on the
-  message first, then route each attachment to the specialist suited to it
-  (image → caption, document + `intent.isQuestion` → QA, document alone →
-  summarize). If nothing was attached and `intent.concepts` came back
-  non-empty, `src/ai/wikipedia.ts` runs one lookup per concept, in parallel
-  (the one external, network-dependent step — everything else in this app
-  runs fully offline once models are cached) so the model isn't limited to
-  what a small local LLM already knows. All of that — attachment
-  observations, any Wikipedia extracts found, recent conversation history —
-  goes to `chat`, which composes and streams the final English reply
-  directly — no separate translation stage. `useAgent.ts` builds that
-  history from the last `MAX_HISTORY_MESSAGES` (10) non-empty messages each
-  turn — it's just past message text, not re-run attachment processing, so
-  a follow-up that references an earlier image relies on that image having
-  been described in the assistant's own prior reply.
-- `src/ai/wikipedia.ts` — `searchWikipedia(concept)`, a single
-  most-relevant article lookup via the MediaWiki Action API
-  (`fr.wikipedia.org`, CORS via the documented `origin=*` param, no key
-  needed), called once per concept `analyzeIntent` extracted. French, not
-  English, Wikipedia — concepts come out of a French message, and matching
-  that language scores far better than searching French wording against an
-  English-language index. Best-effort: any failure resolves to no result
-  rather than breaking the turn. Not runtime-tested from this sandbox (see
-  known limitations) — needs a live test pass once deployed.
+- `src/ai/tools.ts` — the tools the agent can choose to call: `search_wikipedia`
+  (always on offer), plus `search_document` / `summarize_document` once at
+  least one document is attached, each described in plain text (name +
+  what it does + its expected `ARGS`). `runTool(name, args, documents)`
+  executes one and returns a plain-text observation — a Wikipedia extract,
+  an extractive-QA answer with confidence, or a document summary.
+- `src/ai/planner.ts` — `planNextAction(question, observations, tools)`,
+  the decision core of the agentic loop: one small `chat` call that reads
+  the user's message and what's been gathered so far, and replies with
+  either `TOOL: <name>` + `ARGS: <arguments>` or `READY`. This is the model
+  itself choosing which tool to call, if any — not a keyword list, not
+  even a separate fixed "extract search concepts" step (the previous
+  iteration) — it can ask for `search_wikipedia` with "soleil", read the
+  result, then ask for it again with "lune", then decide it's ready.
+  Best-effort parsing: a reply that doesn't match the requested format
+  (including the model just answering directly, which small models
+  occasionally do despite instructions) falls back to "ready", same
+  fail-safe philosophy as the rest of this pipeline.
+- `src/ai/orchestrator.ts` — the agentic loop. Attached images are always
+  described (captioning isn't a "choice" — if it's attached, look at it)
+  and document text is always read, but from there `chat` drives itself:
+  each round, `planNextAction` decides whether to call a tool or answer,
+  `runTool` executes it, the result is appended to the observations the
+  next round sees, up to `MAX_TOOL_ROUNDS` (3) rounds. Includes a simple
+  loop guard — an identical tool+args call twice ends the loop early —
+  since nothing stops a small model from asking the same thing again.
+  Once the planner says `READY` (or the round budget runs out), `chat`
+  composes and streams the final English reply directly from everything
+  gathered — no separate translation stage. `useAgent.ts` builds
+  conversation history from the last `MAX_HISTORY_MESSAGES` (10)
+  non-empty messages each turn — it's just past message text, not re-run
+  attachment processing, so a follow-up that references an earlier image
+  relies on that image having been described in the assistant's own prior
+  reply.
+  **Why a hand-rolled `TOOL:`/`ARGS:` protocol instead of Transformers.js's
+  native `tools` chat-template parameter:** that parameter exists and is
+  the more "official" route (see `apply_chat_template`'s `tools` option),
+  but it delegates the actual `tool_calls` message shape entirely to
+  `onnx-community/Qwen3-0.6B-ONNX`'s own bundled Jinja chat template — one
+  more Hub-hosted file this sandbox has no network access to inspect (see
+  known limitations). A plain-text instruction the planner is asked to
+  follow is fully within this repo, directly testable the same way the
+  `<think>`-tag filter and the old intent parser were tested, and doesn't
+  bet the whole loop on an unverified template detail. Worth revisiting
+  once this is confirmed working live: the native path would fold tool
+  definitions and parsing into the model's own fine-tuned format instead
+  of a bespoke one.
+- `src/ai/wikipedia.ts` — `searchWikipedia(query)`, a single most-relevant
+  article lookup via the MediaWiki Action API (`fr.wikipedia.org`, CORS via
+  the documented `origin=*` param, no key needed), called by the
+  `search_wikipedia` tool. French, not English, Wikipedia — queries come out
+  of a French conversation, and matching that language scores far better
+  than searching French wording against an English-language index.
+  Best-effort: any failure resolves to no result rather than breaking the
+  turn. Not runtime-tested from this sandbox (see known limitations) —
+  needs a live test pass once deployed.
 - `src/ai/pdf.ts` — text-layer extraction for PDFs via `pdfjs-dist` (no OCR:
   scanned/image-only PDFs come back empty and the assistant says so).
 - `src/ai/worker.ts` + `src/composables/useAgent.ts` — all model loading and
@@ -152,13 +173,19 @@ were trained on English data, so accuracy on French source documents may be
 lower than on English ones. The assistant's replies are in English (see
 above) while the rest of the UI is French. There's no OCR, so
 scanned PDFs and `.docx`/`.rtf` files aren't read (the assistant is told to
-say so rather than guess). None of this was runtime-tested against the
-real Hugging Face CDN or `fr.wikipedia.org` from the environment this was
-built in — its network egress is sandboxed to a small allowlist that
-excludes both; the code is correct against each API's own documented
-behavior, but give it a real test pass once deployed, since actual model
-downloads, in-browser inference, and the Wikipedia lookup couldn't be
-exercised end-to-end here.
+say so rather than guess). The agentic tool-calling loop (`planner.ts`)
+asks a 0.6B model to reliably follow a `TOOL:`/`ARGS:`/`READY` text
+protocol every round — small models are less consistent at following
+formatting instructions than larger ones, so expect occasional rounds
+where it just answers directly instead of asking for a tool it arguably
+needed, or asks for one it didn't; the fallback in both cases is simply
+"proceed as if ready," never a broken turn. None of this was
+runtime-tested against the real Hugging Face CDN or `fr.wikipedia.org`
+from the environment this was built in — its network egress is sandboxed
+to a small allowlist that excludes both; the code is correct against each
+API's own documented behavior, but give it a real test pass once
+deployed, since actual model downloads, in-browser inference, and the
+agentic loop's tool calls couldn't be exercised end-to-end here.
 
 ## Development
 

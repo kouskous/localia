@@ -1,10 +1,19 @@
 import { TextStreamer, type Message } from '@huggingface/transformers'
-import { analyzeIntent } from './intent'
 import { extractPdfText } from './pdf'
 import { loadSpecialist } from './pipelines'
+import { planNextAction } from './planner'
 import { SPECIALISTS, type SpecialistId } from './specialists'
+import { availableTools, runTool, type DocumentContext } from './tools'
 import type { AgentEvent, AgentTurnInput } from './types'
-import { searchWikipedia } from './wikipedia'
+
+/** How many tool calls the planner may make in a row before we force an answer. */
+const MAX_TOOL_ROUNDS = 3
+
+const TOOL_STEP_LABELS: Record<string, (args: string) => string> = {
+  search_wikipedia: (args) => `Recherche sur Wikipédia : ${args}…`,
+  search_document: () => 'Recherche dans le document…',
+  summarize_document: () => 'Résumé du document…',
+}
 
 function reportLoad(id: SpecialistId, emit: (event: AgentEvent) => void) {
   return (info: { status: string; progress?: number }) => {
@@ -66,23 +75,17 @@ function createThinkFilter(onVisible: (text: string) => void) {
 }
 
 /**
- * Runs one agentic turn: inspect what the user attached, dispatch each
- * piece to the small specialist model suited to it, then hand everything
- * gathered to the generalist chat model to compose the final, grounded
- * reply directly in French — streamed back token by token.
+ * Runs one agentic turn. Attached images are always described (there's no
+ * real "choice" involved — if it's attached, look at it) and document text
+ * is always read, but from there on `chat` itself drives the loop: given
+ * the tools on offer (see tools.ts), it decides — round by round, up to
+ * `MAX_TOOL_ROUNDS` — whether it needs to call one to gather more
+ * information, or is ready to answer (see planner.ts). Only once it's
+ * ready (or the round budget runs out) does it compose the final reply,
+ * streamed back token by token.
  */
 export async function runAgentTurn(input: AgentTurnInput, emit: (event: AgentEvent) => void): Promise<void> {
   const observations: string[] = []
-
-  // Let `chat` itself read the message rather than matching it against a
-  // fixed French keyword list — it decides whether this is a factual
-  // question worth grounding, and pulls out the specific concepts worth
-  // looking up (see intent.ts).
-  let intent = { isQuestion: false, concepts: [] as string[] }
-  if (input.text.trim()) {
-    emit({ type: 'step', label: 'Analyse de la demande…' })
-    intent = await analyzeIntent(input.text)
-  }
 
   for (const image of input.images) {
     emit({ type: 'step', label: SPECIALISTS.caption.actionLabel })
@@ -93,6 +96,7 @@ export async function runAgentTurn(input: AgentTurnInput, emit: (event: AgentEve
     }
   }
 
+  const documents: DocumentContext[] = []
   for (const doc of input.documents) {
     emit({ type: 'step', label: `Lecture de ${doc.name}…` })
     const text = doc.kind === 'pdf' ? await extractPdfText(doc.data as ArrayBuffer) : (doc.data as string)
@@ -101,38 +105,27 @@ export async function runAgentTurn(input: AgentTurnInput, emit: (event: AgentEve
       observations.push(`Document "${doc.name}": aucun texte lisible n'a été trouvé (probablement un scan sans texte).`)
       continue
     }
-
-    if (intent.isQuestion) {
-      emit({ type: 'step', label: SPECIALISTS.qa.actionLabel })
-      const answerer = await loadSpecialist('qa', reportLoad('qa', emit))
-      const result = await answerer(input.text, text)
-      if (result?.answer) {
-        observations.push(
-          `Dans "${doc.name}", réponse trouvée : "${result.answer}" (confiance ${Math.round(result.score * 100)}%).`,
-        )
-      }
-    } else {
-      emit({ type: 'step', label: SPECIALISTS.summarize.actionLabel })
-      const summarizer = await loadSpecialist('summarize', reportLoad('summarize', emit))
-      const [result] = await summarizer(text, { max_new_tokens: 120 })
-      if (result?.summary_text) {
-        observations.push(`Résumé de "${doc.name}": ${result.summary_text.trim()}`)
-      }
-    }
+    documents.push({ name: doc.name, text })
   }
 
-  // Only reach for Wikipedia when there's nothing else grounding the
-  // answer already (an attached image/document) and `chat` actually
-  // extracted concepts worth looking up. One focused search per concept
-  // — e.g. "qui est plus grand le soleil ou la lune" becomes two searches
-  // ("soleil", "lune") instead of one noisy query on the full sentence,
-  // giving the final answer two clean, relevant extracts instead of one
-  // diluted one.
-  if (input.images.length === 0 && input.documents.length === 0 && intent.concepts.length > 0) {
-    emit({ type: 'step', label: 'Recherche sur Wikipédia…' })
-    const results = await Promise.all(intent.concepts.map((concept) => searchWikipedia(concept)))
-    for (const wiki of results) {
-      if (wiki) observations.push(`Wikipedia — "${wiki.title}": ${wiki.extract}`)
+  const question = input.text.trim() || (documents.length > 0 ? 'Describe what the attached document(s) contain.' : '')
+
+  if (question) {
+    const tools = availableTools(documents)
+    const calledBefore = new Set<string>()
+
+    for (let round = 0; round < MAX_TOOL_ROUNDS; round += 1) {
+      emit({ type: 'step', label: 'Réflexion…' })
+      const action = await planNextAction(question, observations, tools)
+      if (action.type === 'ready') break
+
+      const callKey = `${action.name}:${action.args}`
+      if (calledBefore.has(callKey)) break
+      calledBefore.add(callKey)
+
+      const label = TOOL_STEP_LABELS[action.name]?.(action.args) ?? `Utilisation de l'outil « ${action.name} »…`
+      emit({ type: 'step', label })
+      observations.push(await runTool(action.name, action.args, documents))
     }
   }
 
