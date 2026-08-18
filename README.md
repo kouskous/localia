@@ -33,7 +33,7 @@ using small, task-specialized ONNX models pulled from the Hugging Face Hub
 and cached by the browser after first use.
 
 - `src/ai/specialists.ts` — the model registry, one small model per domain:
-  - `chat` — `onnx-community/Qwen3-1.7B-ONNX` (q4f16), the generalist that
+  - `chat` — `onnx-community/Qwen3-0.6B-ONNX` (q4f16), the generalist that
     composes the final answer — directly in French (see below)
   - `caption` — `Xenova/vit-gpt2-image-captioning`, describes attached images
   - `summarize` — `Xenova/distilbart-cnn-6-6`, summarizes long documents
@@ -80,27 +80,35 @@ of "load once, stay cached" for the whole session. Worth knowing if a long
 conversation touching lots of images/documents ever becomes a real memory
 problem on lower-end mobile devices: this is the first place to revisit.
 
-**Why a single French-native `chat` model, not English-draft-plus-translate:**
-earlier versions had `chat` (Qwen3-0.6B) draft in English — its most
-reliable language at that size — and a separate translation specialist
-convert that into French, since direct French generation from the 0.6B
-checkpoint was noticeably weaker than its English. That worked, but cost a
-second sequential generation every turn, a second model download, and
-several rounds chasing translation-specific issues (quantization
-availability, language-code mismatches between model families). Landing on
-a translation model alone went through three: `opus-mt-en-fr` (~74M,
-bilingual, too basic — grammar mistakes), `nllb-200-distilled-600M`
-(better, too heavy a download), `m2m100_418M` (NLLB's predecessor, a
-lighter middle ground). Rather than keep tuning that second stage, `chat`
-was upgraded to `onnx-community/Qwen3-1.7B-ONNX` and asked to answer in
-French directly — multilingual quality scales favorably with size within a
-model family, and 0.6B was the weakest tier for that specifically. This
-removes the translation stage (and its whole class of failure modes)
-entirely, at the cost of one bigger download instead of two smaller ones
-(~1.05GB at q4f16 vs. the previous ~635MB combined) — not yet confirmed
-against the real Hugging Face CDN from the sandbox this was built in (see
-below), so if `onnx-community/Qwen3-1.7B-ONNX` turns out not to exist under
-that exact name, that's the first thing to check.
+**Why `chat` answers directly in French now, and why it's still 0.6B:**
+earlier versions had `chat` draft in English — its most reliable language
+at that size — and a separate translation specialist convert that into
+French, since direct French generation from the 0.6B checkpoint was
+noticeably weaker than its English. That worked, but cost a second
+sequential generation every turn, a second model download, and several
+rounds chasing translation-specific issues (quantization availability,
+language-code mismatches between model families). Landing on a translation
+model alone went through three: `opus-mt-en-fr` (~74M, bilingual, too
+basic — grammar mistakes), `nllb-200-distilled-600M` (better, too heavy a
+download), `m2m100_418M` (NLLB's predecessor, a lighter middle ground).
+
+Rather than keep tuning that second stage, `chat` was upgraded to
+`onnx-community/Qwen3-1.7B-ONNX` and asked to answer in French directly —
+multilingual quality scales favorably with size within a model family, and
+0.6B is the weakest tier for that specifically. **This failed in the
+browser**: `Error: Can't create a session. ERROR_CODE: 6, ERROR_MESSAGE:
+std::bad_alloc` — the WASM backend couldn't allocate enough memory to even
+initialize a session for a model that size, independent of quantization
+(q4f16 didn't save it). Reverted to `onnx-community/Qwen3-0.6B-ONNX`, kept
+the simplified single-generation-pass architecture (no translation stage,
+direct streaming) since that part of the change was sound, and kept the
+system prompt asking for French directly rather than reinstating
+translation. Net effect: simpler, faster (one generation instead of two),
+but French quality is back to the original known weakness at this size —
+unresolved. Next things worth trying: a smaller multilingual-balanced model
+(not just a bigger one in the same English-leaning family), or reinstating
+a lightweight translation stage now that the rest of the pipeline is
+simpler.
 
 **Known limitations, honestly:** these are genuinely small models, chosen to
 keep downloads light rather than for peak accuracy. `caption`/`summarize`/`qa`
