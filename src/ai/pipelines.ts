@@ -1,4 +1,4 @@
-import { pipeline, type ProgressInfo } from '@huggingface/transformers'
+import { pipeline, type DataType, type ProgressInfo } from '@huggingface/transformers'
 import './env'
 import { SPECIALISTS, type SpecialistId } from './specialists'
 
@@ -20,7 +20,7 @@ export function loadSpecialist<T extends SpecialistId>(
     const config = SPECIALISTS[id]
     instance = pipeline(config.task, config.model, {
       device: 'auto',
-      dtype: 'dtype' in config ? config.dtype : undefined,
+      dtype: (config as { dtype?: DataType }).dtype,
       progress_callback: onProgress,
     })
     instances.set(id, instance)

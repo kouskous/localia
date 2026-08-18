@@ -33,8 +33,10 @@ using small, task-specialized ONNX models pulled from the Hugging Face Hub
 and cached by the browser after first use.
 
 - `src/ai/specialists.ts` — the model registry, one small model per domain:
-  - `chat` — `onnx-community/Qwen3-0.6B-ONNX` (q4f16), the generalist that
-    composes the final answer — in English (see below)
+  - `chat` — `onnx-community/Qwen3-0.6B-ONNX` (default quantization for the
+    device), the generalist that composes the final answer — in English (see
+    below), with up to 1000 new tokens per reply so longer questions get a
+    fuller answer instead of being cut short
   - `caption` — `Xenova/vit-gpt2-image-captioning`, describes attached images
   - `summarize` — `Xenova/distilbart-cnn-6-6`, summarizes long documents
   - `qa` — `Xenova/distilbert-base-uncased-distilled-squad`, extractive
