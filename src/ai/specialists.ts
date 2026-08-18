@@ -47,14 +47,19 @@ export const SPECIALISTS = {
   // `chat` reasons and drafts in English — by far its strongest language at
   // this size — and this specialist turns that into fluent French, which a
   // small generalist chat model can't reliably do on its own. M2M100 is
-  // NLLB's direct predecessor (same Meta research lineage) — a genuine
-  // middle ground: ~418M params (30% lighter than NLLB-200's 600M) while
-  // still a modern multilingual model, well ahead of the small bilingual
-  // opus-mt-en-fr on fluency for a high-resource pair like EN→FR.
+  // NLLB's direct predecessor (same Meta research lineage) — still a
+  // modern multilingual model, well ahead of the small bilingual
+  // opus-mt-en-fr on fluency for a high-resource pair like EN→FR. Same
+  // 418M-param model as before, but q4f16-quantized (like `chat` above)
+  // rather than the default ~q8, to land closer to a 100-200MB download —
+  // unverified whether this repo publishes a q4f16 ONNX file; if it
+  // doesn't, loading fails cleanly (visible in the console) rather than
+  // silently, and we'd fall back to the unquantized default.
   translate: {
     id: 'translate',
     task: 'translation',
     model: 'Xenova/m2m100_418M',
+    dtype: 'q4f16',
     actionLabel: 'Traduction en français…',
   },
 } satisfies Record<SpecialistId, SpecialistConfig>
