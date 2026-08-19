@@ -22,7 +22,10 @@ function buildSystemPrompt(tools: ToolSchema[]): string {
     "You are Localia's planner: decide the single next step before answering the user. " +
     'You may call one tool to gather information, or say you are ready to answer if you ' +
     'already have enough. Only call a tool when it would genuinely help — greetings and ' +
-    "small talk never need one, and don't call the same tool with the same arguments twice.\n\n" +
+    "small talk never need one, and don't call the same tool with the same arguments twice. " +
+    'If the user asks about a real-world fact — a person, place, organization, historical ' +
+    'event, or date — and that fact is not already in "Gathered so far", you MUST call ' +
+    "search_wikipedia before answering, rather than relying on your own memory.\n\n" +
     `Available tools:\n${toolList}\n\n` +
     'To call a tool, reply with EXACTLY one tool_call tag like the examples above, filled in ' +
     'with real values, and nothing else. If no tool is needed, reply with exactly: READY'
@@ -55,8 +58,14 @@ export async function planNextAction(
 
   // Visibility: what the planner actually sees this round, before we know
   // what it will do with it.
-  console.debug(`[Localia planner] round ${round} context:`, messages)
+  console.debug(`[Localia planner] round ${round} context:`, {
+    question,
+    observations,
+    toolsOffered: tools.map((tool) => tool.function.name),
+    messages,
+  })
 
+  const startedAt = performance.now()
   const [result] = await chat(messages, {
     max_new_tokens: 120,
     do_sample: false,
@@ -66,13 +75,14 @@ export async function planNextAction(
     tools,
     tokenizer_encode_kwargs: { enable_thinking: false },
   })
+  const elapsedMs = Math.round(performance.now() - startedAt)
 
   const content = result?.generated_text.at(-1)?.content
   const raw = typeof content === 'string' ? content : ''
-  const action = parseAction(raw)
+  const { action, reason } = parseAction(raw)
   // Visibility fix: a planning round that decides "ready" and one that
   // silently failed to parse used to look identical from the outside.
-  console.debug(`[Localia planner] round ${round} output:`, raw, '→', action)
+  console.debug(`[Localia planner] round ${round} output (${elapsedMs}ms):`, { raw, action, reason })
   return action
 }
 
@@ -82,18 +92,24 @@ export async function planNextAction(
  * model just answering directly instead of following instructions, which
  * small models occasionally do — falls back to "ready to answer" rather
  * than throwing, same fail-safe philosophy as the rest of this pipeline.
+ *
+ * Returns the fallback `reason` alongside the action purely for logging —
+ * "the model explicitly said READY" and "we couldn't parse its reply" used
+ * to be indistinguishable from the outside.
  */
-function parseAction(raw: string): PlannedAction {
+function parseAction(raw: string): { action: PlannedAction; reason: string } {
   const clean = raw.replace(/<think>[\s\S]*?<\/think>/gi, '')
   const match = /<tool_call>([\s\S]*?)<\/tool_call>/i.exec(clean)
-  if (!match) return { type: 'ready' }
+  if (!match) return { action: { type: 'ready' }, reason: 'no <tool_call> tag found in reply' }
 
   try {
     const parsed = JSON.parse(match[1].trim()) as { name?: unknown; arguments?: unknown }
-    if (typeof parsed.name !== 'string' || !parsed.name.trim()) return { type: 'ready' }
+    if (typeof parsed.name !== 'string' || !parsed.name.trim()) {
+      return { action: { type: 'ready' }, reason: 'tool_call JSON had no usable "name"' }
+    }
     const args = parsed.arguments && typeof parsed.arguments === 'object' ? (parsed.arguments as Record<string, unknown>) : {}
-    return { type: 'tool', name: parsed.name.trim().toLowerCase(), args }
-  } catch {
-    return { type: 'ready' }
+    return { action: { type: 'tool', name: parsed.name.trim().toLowerCase(), args }, reason: 'parsed tool_call' }
+  } catch (error) {
+    return { action: { type: 'ready' }, reason: `tool_call JSON failed to parse: ${String(error)}` }
   }
 }

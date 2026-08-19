@@ -26,7 +26,10 @@ const BASE_TOOLS: ToolSchema[] = [
     type: 'function',
     function: {
       name: 'search_wikipedia',
-      description: 'Look up a topic on Wikipedia.',
+      description:
+        'Look up a real-world fact on Wikipedia: people, places, organizations, historical events, dates, ' +
+        "or general-knowledge topics. Prefer calling this over guessing or relying on the model's own " +
+        'memory whenever the user asks something factual that could be verified this way.',
       parameters: {
         type: 'object',
         properties: { query: { type: 'string', description: 'The search term, e.g. "Tour Eiffel".' } },
