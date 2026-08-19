@@ -116,16 +116,24 @@ export async function runAgentTurn(input: AgentTurnInput, emit: (event: AgentEve
 
     for (let round = 0; round < MAX_TOOL_ROUNDS; round += 1) {
       emit({ type: 'step', label: 'Réflexion…' })
-      const action = await planNextAction(question, observations, tools)
-      if (action.type === 'ready') break
+      const action = await planNextAction(question, observations, tools, round)
+      if (action.type === 'ready') {
+        console.debug(`[Localia orchestrator] round ${round}: planner is ready, exiting tool loop`)
+        break
+      }
 
       const callKey = JSON.stringify({ name: action.name, args: action.args })
-      if (calledBefore.has(callKey)) break
+      if (calledBefore.has(callKey)) {
+        console.debug(`[Localia orchestrator] round ${round}: skipping repeat call`, action, '— exiting tool loop')
+        break
+      }
       calledBefore.add(callKey)
 
       const label = TOOL_STEP_LABELS[action.name]?.(action.args) ?? `Utilisation de l'outil « ${action.name} »…`
       emit({ type: 'step', label })
-      observations.push(await runTool(action.name, action.args, documents))
+      const observation = await runTool(action.name, action.args, documents)
+      console.debug(`[Localia orchestrator] round ${round}: ran tool`, action, '→', observation)
+      observations.push(observation)
     }
   }
 
@@ -153,6 +161,10 @@ export async function runAgentTurn(input: AgentTurnInput, emit: (event: AgentEve
     { role: 'user', content: `${contextBlock}${input.text || 'Describe what you observe.'}` },
   ]
 
+  // Visibility: the full context handed to the final answering call, after
+  // the tool-calling rounds above are done gathering observations.
+  console.debug('[Localia orchestrator] final context:', messages)
+
   let streamed = ''
   const emitVisible = createThinkFilter((visible) => {
     if (!visible) return
@@ -173,6 +185,8 @@ export async function runAgentTurn(input: AgentTurnInput, emit: (event: AgentEve
     // direct answer, not the reasoning transcript.
     tokenizer_encode_kwargs: { enable_thinking: false },
   })
+
+  console.debug('[Localia orchestrator] final output:', streamed)
 
   if (!streamed.trim()) {
     // Extremely unlikely fallback: streamer produced nothing usable.
