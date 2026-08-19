@@ -25,12 +25,26 @@ function buildSystemPrompt(tools: ToolSchema[]): string {
     "small talk never need one, and don't call the same tool with the same arguments twice. " +
     'If the user asks about a real-world fact — a person, place, organization, historical ' +
     'event, or date — and that fact is not already in "Gathered so far", you MUST call ' +
-    "search_wikipedia before answering, rather than relying on your own memory.\n\n" +
+    'search_wikipedia before answering, rather than relying on your own memory. This applies ' +
+    "no matter what language the user's message is written in.\n\n" +
     `Available tools:\n${toolList}\n\n` +
     'To call a tool, reply with EXACTLY one tool_call tag like the examples above, filled in ' +
     'with real values, and nothing else. If no tool is needed, reply with exactly: READY'
   )
 }
+
+/**
+ * A worked example, inserted as a fake prior exchange (not prose), of a
+ * factual question triggering search_wikipedia. At Qwen3-0.6B's size, a
+ * demonstrated turn anchors behavior far more reliably than the equivalent
+ * rule stated in prose in the system prompt alone — observed in testing: a
+ * French factual question ("qui a gagné la coupe du monde 2026 ?") replied
+ * "READY" outright despite the prose rule above telling it not to.
+ */
+const FEW_SHOT_TOOL_TURN: Message[] = [
+  { role: 'user', content: "User's message: Who won the 2010 FIFA World Cup?" },
+  { role: 'assistant', content: '<tool_call>{"name":"search_wikipedia","arguments":{"query":"2010 FIFA World Cup winner"}}</tool_call>' },
+]
 
 /**
  * The decision core of the agentic loop (see orchestrator.ts): asks `chat`
@@ -51,8 +65,10 @@ export async function planNextAction(
     ? `Gathered so far:\n${observations.map((observation) => `- ${observation}`).join('\n')}\n\n`
     : ''
 
+  const hasWikipedia = tools.some((tool) => tool.function.name === 'search_wikipedia')
   const messages: Message[] = [
     { role: 'system', content: buildSystemPrompt(tools) },
+    ...(hasWikipedia ? FEW_SHOT_TOOL_TURN : []),
     { role: 'user', content: `${observationsBlock}User's message: ${question}` },
   ]
 
