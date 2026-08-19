@@ -40,6 +40,7 @@ export async function planNextAction(
   question: string,
   observations: string[],
   tools: ToolSchema[],
+  round: number,
 ): Promise<PlannedAction> {
   const chat = await loadSpecialist('chat')
 
@@ -51,6 +52,10 @@ export async function planNextAction(
     { role: 'system', content: buildSystemPrompt(tools) },
     { role: 'user', content: `${observationsBlock}User's message: ${question}` },
   ]
+
+  // Visibility: what the planner actually sees this round, before we know
+  // what it will do with it.
+  console.debug(`[Localia planner] round ${round} context:`, messages)
 
   const [result] = await chat(messages, {
     max_new_tokens: 120,
@@ -67,7 +72,7 @@ export async function planNextAction(
   const action = parseAction(raw)
   // Visibility fix: a planning round that decides "ready" and one that
   // silently failed to parse used to look identical from the outside.
-  console.debug('[Localia planner] round output:', raw, '→', action)
+  console.debug(`[Localia planner] round ${round} output:`, raw, '→', action)
   return action
 }
 
